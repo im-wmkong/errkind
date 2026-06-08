@@ -6,6 +6,8 @@
 
 > 一个面向 Go 1.23+ 的**业务错误建模库**——不是错误处理库, 不是 stack 库, 不是 grpc 库, 而是业务错误领域模型。
 
+简体中文 | [English](README.md)
+
 ## 设计原则
 
 **Identity (Kind) 与 Instance (Error) 分离。**
