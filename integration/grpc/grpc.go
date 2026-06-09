@@ -1,4 +1,4 @@
-// Package grpc 把 errkit 错误与 gRPC *status.Status 互转, 并提供拦截器。
+// Package grpc 把 errkind 错误与 gRPC *status.Status 互转, 并提供拦截器。
 //
 // 与 ext/grpc 的关系:
 //   - ext/grpc 是"轻量层", 只提供 Code(c)(err) / CodeOf(err), 不 import google.golang.org/grpc,
@@ -6,9 +6,9 @@
 //   - integration/grpc 是"重量层", 真正接 google.golang.org/grpc + errdetails,
 //     提供 ToStatus / FromStatus / 拦截器, 给真实 gRPC 服务用。
 //
-// 单独 module: 主 errkit module 不会被 grpc 重依赖污染。
+// 单独 module: 主 errkind module 不会被 grpc 重依赖污染。
 //
-//	import grpcint "github.com/im-wmkong/errkit/integration/grpc"
+//	import grpcint "github.com/im-wmkong/errkind/integration/grpc"
 //
 //	srv := grpcsdk.NewServer(
 //	    grpcsdk.UnaryInterceptor(grpcint.UnaryServerInterceptor()),
@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	grpcsdk "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -29,19 +29,19 @@ import (
 )
 
 // Domain 是 ErrorInfo.Domain 默认值; 业务可在调用前覆盖。
-var Domain = "errkit"
+var Domain = "errkind"
 
-// metaCodeKey 是 ErrorInfo.Metadata 中携带 errkit business code 的特殊 key。
+// metaCodeKey 是 ErrorInfo.Metadata 中携带 errkind business code 的特殊 key。
 //
 // 设计取舍: errdetails 标准 Detail 类型里没有"业务码"语义,
 // 借 Metadata 走一个保留前缀; "_errkit." 这个前缀业务自定义 attr 通常不会撞。
-const metaCodeKey = "_errkit.code"
+const metaCodeKey = "_errkind.code"
 
-// ToStatus 把 errkit 错误映射为 *status.Status:
+// ToStatus 把 errkind 错误映射为 *status.Status:
 //   - code     <- ext/grpc 装饰; 没有则 codes.Unknown
-//   - message  <- errkit.MessageOf
+//   - message  <- errkind.MessageOf
 //   - details  <- ErrorInfo{
-//     Reason: errkit Kind name,
+//     Reason: errkind Kind name,
 //     Domain: Domain,
 //     Metadata: AllAttrs + {_errkit.code: <business code>},
 //     }
@@ -55,16 +55,16 @@ func ToStatus(err error) *status.Status {
 	if g, ok := grpcext.CodeOf(err); ok {
 		c = codes.Code(g)
 	}
-	st := status.New(c, errkit.MessageOf(err))
+	st := status.New(c, errkind.MessageOf(err))
 
 	info := &errdetails.ErrorInfo{Domain: Domain, Metadata: map[string]string{}}
-	if n, ok := errkit.NameOf(err); ok {
+	if n, ok := errkind.NameOf(err); ok {
 		info.Reason = n
 	}
-	if bc, ok := errkit.CodeOf(err); ok {
+	if bc, ok := errkind.CodeOf(err); ok {
 		info.Metadata[metaCodeKey] = strconv.FormatUint(uint64(bc), 10)
 	}
-	for _, kv := range errkit.AllAttrs(err) {
+	for _, kv := range errkind.AllAttrs(err) {
 		info.Metadata[kv.Key] = fmt.Sprint(kv.Val)
 	}
 	if d, derr := st.WithDetails(info); derr == nil {
@@ -73,7 +73,7 @@ func ToStatus(err error) *status.Status {
 	return st
 }
 
-// FromStatus 把对端返回的 *status.Status 还原成一个最薄的 errkit-friendly 错误。
+// FromStatus 把对端返回的 *status.Status 还原成一个最薄的 errkind-friendly 错误。
 //
 // 设计取舍: 不试图反查 Registry (这要求双方共享 Kind 注册中心, 不现实),
 // 而是产生一个携带原始 grpc code / business code / name / attrs 的轻量包装,
@@ -90,7 +90,7 @@ func FromStatus(st *status.Status) error {
 		reason       string
 		businessCode uint32
 		hasBusiness  bool
-		attrs        []errkit.Attr
+		attrs        []errkind.Attr
 	)
 	for _, d := range st.Details() {
 		if info, ok := d.(*errdetails.ErrorInfo); ok {
@@ -103,7 +103,7 @@ func FromStatus(st *status.Status) error {
 					}
 					continue
 				}
-				attrs = append(attrs, errkit.Attr{Key: k, Val: v})
+				attrs = append(attrs, errkind.Attr{Key: k, Val: v})
 			}
 			break
 		}
@@ -118,7 +118,7 @@ func FromStatus(st *status.Status) error {
 	}
 }
 
-// IsReason 检查 err 是否来自远端的某个 ErrorInfo.Reason (即 errkit Kind name)。
+// IsReason 检查 err 是否来自远端的某个 ErrorInfo.Reason (即 errkind Kind name)。
 //
 //	if grpcint.IsReason(err, "user_not_found") { ... }
 func IsReason(err error, reason string) bool {
@@ -128,22 +128,22 @@ func IsReason(err error, reason string) bool {
 	return false
 }
 
-// CodeOf 提取 errkit business Code (与 grpc code 不同)。先看本地 errkit 错误, 再看 RemoteError。
-func CodeOf(err error) (errkit.Code, bool) {
-	if c, ok := errkit.CodeOf(err); ok {
+// CodeOf 提取 errkind business Code (与 grpc code 不同)。先看本地 errkind 错误, 再看 RemoteError。
+func CodeOf(err error) (errkind.Code, bool) {
+	if c, ok := errkind.CodeOf(err); ok {
 		return c, true
 	}
 	if r, ok := asRemote(err); ok {
 		if c, has := r.RemoteBusinessCode(); has {
-			return errkit.Code(c), true
+			return errkind.Code(c), true
 		}
 	}
 	return 0, false
 }
 
-// NameOf 提取还原后的 Kind name。先看本地 errkit 错误, 再看 RemoteError。
+// NameOf 提取还原后的 Kind name。先看本地 errkind 错误, 再看 RemoteError。
 func NameOf(err error) (string, bool) {
-	if n, ok := errkit.NameOf(err); ok {
+	if n, ok := errkind.NameOf(err); ok {
 		return n, true
 	}
 	if r, ok := asRemote(err); ok {
@@ -154,9 +154,9 @@ func NameOf(err error) (string, bool) {
 	return "", false
 }
 
-// AttrsOf 提取还原后的 attrs。先看本地 errkit 错误链, 再看 RemoteError。
-func AttrsOf(err error) []errkit.Attr {
-	if attrs := errkit.AllAttrs(err); len(attrs) > 0 {
+// AttrsOf 提取还原后的 attrs。先看本地 errkind 错误链, 再看 RemoteError。
+func AttrsOf(err error) []errkind.Attr {
+	if attrs := errkind.AllAttrs(err); len(attrs) > 0 {
 		return attrs
 	}
 	if r, ok := asRemote(err); ok {
@@ -176,7 +176,7 @@ type RemoteError interface {
 	error
 	GRPCCode() uint32
 	RemoteName() string
-	RemoteAttrs() []errkit.Attr
+	RemoteAttrs() []errkind.Attr
 	RemoteBusinessCode() (uint32, bool)
 }
 
@@ -197,7 +197,7 @@ func asRemote(err error) (RemoteError, bool) {
 
 // remoteErr 是 FromStatus 还原出来的轻量错误, 实现 RemoteError 契约。
 //
-// 故意不冒充 *kerr (errkit 内部 extract 只认 *kerr 私有类型),
+// 故意不冒充 *kerr (errkind 内部 extract 只认 *kerr 私有类型),
 // 而是通过 RemoteError 接口被本包 helper 识别。
 // GRPCCode 让 grpcext.CodeOf 直接可用。
 type remoteErr struct {
@@ -206,7 +206,7 @@ type remoteErr struct {
 	businessCode uint32
 	hasBusiness  bool
 	name         string
-	attrs        []errkit.Attr
+	attrs        []errkind.Attr
 }
 
 // 编译期断言: remoteErr 必须满足 RemoteError 契约。
@@ -215,10 +215,10 @@ var _ RemoteError = (*remoteErr)(nil)
 func (e *remoteErr) Error() string                      { return e.message }
 func (e *remoteErr) GRPCCode() uint32                   { return e.grpcCode }
 func (e *remoteErr) RemoteName() string                 { return e.name }
-func (e *remoteErr) RemoteAttrs() []errkit.Attr         { return append([]errkit.Attr(nil), e.attrs...) }
+func (e *remoteErr) RemoteAttrs() []errkind.Attr         { return append([]errkind.Attr(nil), e.attrs...) }
 func (e *remoteErr) RemoteBusinessCode() (uint32, bool) { return e.businessCode, e.hasBusiness }
 
-// UnaryServerInterceptor 在服务端把任意 errkit 错误转成 gRPC status, 客户端就能拿到 ErrorInfo。
+// UnaryServerInterceptor 在服务端把任意 errkind 错误转成 gRPC status, 客户端就能拿到 ErrorInfo。
 //
 //	srv := grpcsdk.NewServer(
 //	    grpcsdk.UnaryInterceptor(grpcint.UnaryServerInterceptor()),
@@ -238,8 +238,8 @@ func UnaryServerInterceptor() grpcsdk.UnaryServerInterceptor {
 	}
 }
 
-// UnaryClientInterceptor 在客户端把对端 status 还原成 errkit-friendly 错误,
-// 让调用方继续用 errkit.CodeOf / grpcext.CodeOf / 本包 IsReason 提取。
+// UnaryClientInterceptor 在客户端把对端 status 还原成 errkind-friendly 错误,
+// 让调用方继续用 errkind.CodeOf / grpcext.CodeOf / 本包 IsReason 提取。
 //
 //	conn, _ := grpcsdk.NewClient(addr,
 //	    grpcsdk.WithUnaryInterceptor(grpcint.UnaryClientInterceptor()),

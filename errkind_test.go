@@ -1,4 +1,4 @@
-package errkit_test
+package errkind_test
 
 import (
 	"encoding/json"
@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/im-wmkong/errkit"
+	"github.com/im-wmkong/errkind"
 )
 
 // 用独立 Registry, 避免不同测试间的 code/name 冲突。
-func newReg() *errkit.Registry { return errkit.NewRegistry() }
+func newReg() *errkind.Registry { return errkind.NewRegistry() }
 
 // --- Identity / Instance --------------------------------------
 
@@ -19,15 +19,15 @@ func TestKindIdentityVsInstance(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "identity")
 
-	e1 := K.New(errkit.Message("a"))
-	e2 := K.New(errkit.Message("b"))
+	e1 := K.New(errkind.Message("a"))
+	e2 := K.New(errkind.Message("b"))
 	if e1 == e2 {
 		t.Fatal("instances must differ")
 	}
 	if !K.Is(e1) || !K.Is(e2) {
 		t.Fatal("Kind.Is should match own instances")
 	}
-	if errkit.KindOf(e1) != K {
+	if errkind.KindOf(e1) != K {
 		t.Fatal("KindOf should return original Kind")
 	}
 }
@@ -71,7 +71,7 @@ func TestDefineEmptyName(t *testing.T) {
 func TestWrapNil(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "x")
-	if got := K.Wrap(nil, errkit.Message("m")); got != nil {
+	if got := K.Wrap(nil, errkind.Message("m")); got != nil {
 		t.Fatalf("Wrap(nil) must return nil, got %v", got)
 	}
 }
@@ -107,10 +107,10 @@ func TestKindOf(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "x")
 	e := K.New()
-	if got := errkit.KindOf(e); got != K {
+	if got := errkind.KindOf(e); got != K {
 		t.Fatal("KindOf wrong")
 	}
-	if got := errkit.KindOf(stderrors.New("plain")); got != nil {
+	if got := errkind.KindOf(stderrors.New("plain")); got != nil {
 		t.Fatal("KindOf on plain error should be nil")
 	}
 }
@@ -120,17 +120,17 @@ func TestCodeOfAndNameOf(t *testing.T) {
 	K := r.Define(42, "named")
 	e := K.New()
 
-	if c, ok := errkit.CodeOf(e); !ok || c != 42 {
+	if c, ok := errkind.CodeOf(e); !ok || c != 42 {
 		t.Fatalf("CodeOf wrong: %v %v", c, ok)
 	}
-	if n, ok := errkit.NameOf(e); !ok || n != "named" {
+	if n, ok := errkind.NameOf(e); !ok || n != "named" {
 		t.Fatalf("NameOf wrong: %v %v", n, ok)
 	}
 
-	if _, ok := errkit.CodeOf(stderrors.New("plain")); ok {
+	if _, ok := errkind.CodeOf(stderrors.New("plain")); ok {
 		t.Fatal("CodeOf on plain error should be false")
 	}
-	if _, ok := errkit.NameOf(nil); ok {
+	if _, ok := errkind.NameOf(nil); ok {
 		t.Fatal("NameOf(nil) should be false")
 	}
 }
@@ -138,22 +138,22 @@ func TestCodeOfAndNameOf(t *testing.T) {
 func TestAttrsOfReturnsCopy(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "x")
-	e := K.New(errkit.With("uid", 1))
+	e := K.New(errkind.With("uid", 1))
 
-	got := errkit.AttrsOf(e)
+	got := errkind.AttrsOf(e)
 	got[0].Val = 999 // 改外部副本
 
-	got2 := errkit.AttrsOf(e)
+	got2 := errkind.AttrsOf(e)
 	if got2[0].Val != 1 {
 		t.Fatalf("AttrsOf must return a copy, got %v", got2[0].Val)
 	}
 }
 
 func TestMessageOfFallback(t *testing.T) {
-	if got := errkit.MessageOf(stderrors.New("raw")); got != "raw" {
+	if got := errkind.MessageOf(stderrors.New("raw")); got != "raw" {
 		t.Fatalf("fallback to err.Error(), got %q", got)
 	}
-	if got := errkit.MessageOf(nil); got != "" {
+	if got := errkind.MessageOf(nil); got != "" {
 		t.Fatal("nil should be empty")
 	}
 }
@@ -162,11 +162,11 @@ func TestAttrsOrderAndOverride(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "x")
 	e := K.New(
-		errkit.With("uid", 1),
-		errkit.With("trace", "x"),
-		errkit.With("uid", 2),
+		errkind.With("uid", 1),
+		errkind.With("trace", "x"),
+		errkind.With("uid", 2),
 	)
-	attrs := errkit.AttrsOf(e)
+	attrs := errkind.AttrsOf(e)
 	if len(attrs) != 2 {
 		t.Fatalf("len wrong: %v", attrs)
 	}
@@ -182,10 +182,10 @@ func TestAllAttrsFlatten(t *testing.T) {
 	r := newReg()
 	A := r.Define(1, "a")
 	B := r.Define(2, "b")
-	e := B.Wrap(A.New(errkit.With("inner", 1), errkit.With("shared", "from_a")),
-		errkit.With("outer", 2),
-		errkit.With("shared", "from_b"))
-	all := errkit.AllAttrs(e)
+	e := B.Wrap(A.New(errkind.With("inner", 1), errkind.With("shared", "from_a")),
+		errkind.With("outer", 2),
+		errkind.With("shared", "from_b"))
+	all := errkind.AllAttrs(e)
 
 	got := map[string]any{}
 	for _, a := range all {
@@ -203,11 +203,11 @@ func TestAllAttrsFlatten(t *testing.T) {
 
 func TestDefaultMessage(t *testing.T) {
 	r := newReg()
-	K := r.Define(1, "x", errkit.DefaultMessage("默认"))
-	if errkit.MessageOf(K.New()) != "默认" {
+	K := r.Define(1, "x", errkind.DefaultMessage("默认"))
+	if errkind.MessageOf(K.New()) != "默认" {
 		t.Fatal("default message")
 	}
-	if errkit.MessageOf(K.New(errkit.Message("覆盖"))) != "覆盖" {
+	if errkind.MessageOf(K.New(errkind.Message("覆盖"))) != "覆盖" {
 		t.Fatal("override")
 	}
 }
@@ -218,20 +218,20 @@ func TestStackDefaultOff(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "x")
 	e := K.New()
-	st := e.(errkit.Tracer).StackTrace()
+	st := e.(errkind.Tracer).StackTrace()
 	if len(st) != 0 {
 		t.Fatal("default should not capture stack")
 	}
 }
 
 func TestStackOn(t *testing.T) {
-	errkit.SetCaptureStack(true)
-	t.Cleanup(func() { errkit.SetCaptureStack(false) })
+	errkind.SetCaptureStack(true)
+	t.Cleanup(func() { errkind.SetCaptureStack(false) })
 
 	r := newReg()
 	K := r.Define(1, "x")
 	e := K.New()
-	st := e.(errkit.Tracer).StackTrace()
+	st := e.(errkind.Tracer).StackTrace()
 	if len(st) == 0 {
 		t.Fatal("expected frames")
 	}
@@ -265,7 +265,7 @@ func TestLookup(t *testing.T) {
 func TestErrorString(t *testing.T) {
 	r := newReg()
 	K := r.Define(7, "boom")
-	e := K.Wrap(stderrors.New("root"), errkit.Message("ctx"))
+	e := K.Wrap(stderrors.New("root"), errkind.Message("ctx"))
 	got := e.Error()
 	for _, w := range []string{"boom", "(7)", "ctx", "root"} {
 		if !strings.Contains(got, w) {
@@ -279,7 +279,7 @@ func TestErrorString(t *testing.T) {
 func TestFormatV(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "fmt_v")
-	e := K.New(errkit.Message("m"))
+	e := K.New(errkind.Message("m"))
 	if got := fmt.Sprintf("%v", e); got != e.Error() {
 		t.Fatalf("%%v should equal Error(), got %q", got)
 	}
@@ -291,7 +291,7 @@ func TestFormatV(t *testing.T) {
 func TestFormatQ(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "fmt_q")
-	e := K.New(errkit.Message("m"))
+	e := K.New(errkind.Message("m"))
 	got := fmt.Sprintf("%q", e)
 	if !strings.HasPrefix(got, `"`) || !strings.HasSuffix(got, `"`) {
 		t.Fatalf("%%q should be quoted, got %s", got)
@@ -299,12 +299,12 @@ func TestFormatQ(t *testing.T) {
 }
 
 func TestFormatPlusVWithStack(t *testing.T) {
-	errkit.SetCaptureStack(true)
-	t.Cleanup(func() { errkit.SetCaptureStack(false) })
+	errkind.SetCaptureStack(true)
+	t.Cleanup(func() { errkind.SetCaptureStack(false) })
 
 	r := newReg()
 	K := r.Define(1, "fmt_plus")
-	e := K.New(errkit.Message("m"))
+	e := K.New(errkind.Message("m"))
 
 	got := fmt.Sprintf("%+v", e)
 	if !strings.Contains(got, "fmt_plus") {
@@ -319,7 +319,7 @@ func TestFormatPlusVWithStack(t *testing.T) {
 func TestFormatPlusVWithoutStack(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "fmt_plus_nostack")
-	e := K.New(errkit.Message("m"))
+	e := K.New(errkind.Message("m"))
 	got := fmt.Sprintf("%+v", e)
 	// 没栈时 %+v 等于 Error()
 	if got != e.Error() {
@@ -331,10 +331,10 @@ func TestFormatPlusVWithoutStack(t *testing.T) {
 
 func TestMarshalJSON(t *testing.T) {
 	r := newReg()
-	K := r.Define(10001, "json_basic", errkit.DefaultMessage("默认"))
+	K := r.Define(10001, "json_basic", errkind.DefaultMessage("默认"))
 	e := K.Wrap(stderrors.New("root"),
-		errkit.With("uid", 42),
-		errkit.With("name", "alice"),
+		errkind.With("uid", 42),
+		errkind.With("name", "alice"),
 	)
 
 	raw, err := json.Marshal(e)
@@ -385,11 +385,11 @@ func TestMarshalJSONNoCauseNoMessageNoAttrs(t *testing.T) {
 	}
 }
 
-func TestMarshalJSONNestedErrkit(t *testing.T) {
+func TestMarshalJSONNestedErrkind(t *testing.T) {
 	r := newReg()
 	A := r.Define(1, "json_inner")
 	B := r.Define(2, "json_outer")
-	e := B.Wrap(A.New(errkit.With("a", 1)), errkit.With("b", 2))
+	e := B.Wrap(A.New(errkind.With("a", 1)), errkind.With("b", 2))
 
 	raw, err := json.Marshal(e)
 	if err != nil {
@@ -410,7 +410,7 @@ func TestMarshalJSONUnserializableValue(t *testing.T) {
 
 	// chan 不可被 json.Marshal, 应当降级为字符串而不是整条失败
 	bad := make(chan int)
-	e := K.New(errkit.With("ch", bad))
+	e := K.New(errkind.With("ch", bad))
 
 	raw, err := json.Marshal(e)
 	if err != nil {
@@ -447,7 +447,7 @@ func TestMarshalJSONCauseImplementsMarshaler(t *testing.T) {
 
 func TestKindAccessors(t *testing.T) {
 	r := newReg()
-	K := r.Define(7, "accessors", errkit.DefaultMessage("默认"))
+	K := r.Define(7, "accessors", errkind.DefaultMessage("默认"))
 	if K.Code() != 7 {
 		t.Fatal("Code")
 	}
@@ -462,9 +462,9 @@ func TestKindAccessors(t *testing.T) {
 func TestMessagef(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "msgf")
-	e := K.New(errkit.Messagef("uid=%d age=%d", 42, 18))
-	if errkit.MessageOf(e) != "uid=42 age=18" {
-		t.Fatalf("Messagef wrong: %q", errkit.MessageOf(e))
+	e := K.New(errkind.Messagef("uid=%d age=%d", 42, 18))
+	if errkind.MessageOf(e) != "uid=42 age=18" {
+		t.Fatalf("Messagef wrong: %q", errkind.MessageOf(e))
 	}
 }
 
@@ -472,15 +472,15 @@ func TestMessagef(t *testing.T) {
 
 // 用 errors.As 提取出来后调用 Kind/Message/Attrs 也应工作。
 type kerrView interface {
-	Kind() *errkit.Kind
+	Kind() *errkind.Kind
 	Message() string
-	Attrs() []errkit.Attr
+	Attrs() []errkind.Attr
 }
 
 func TestKerrViewAccessors(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "kerr_view")
-	e := K.New(errkit.Message("m"), errkit.With("uid", 1))
+	e := K.New(errkind.Message("m"), errkind.With("uid", 1))
 
 	v, ok := e.(kerrView)
 	if !ok {
@@ -497,42 +497,42 @@ func TestKerrViewAccessors(t *testing.T) {
 	}
 }
 
-// --- AttrsOf 空 attr / 非 errkit 错误 -------------------------
+// --- AttrsOf 空 attr / 非 errkind 错误 -------------------------
 
 func TestAttrsOfEmptyAndPlain(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "attrs_empty")
-	if got := errkit.AttrsOf(K.New()); got != nil {
+	if got := errkind.AttrsOf(K.New()); got != nil {
 		t.Fatalf("no attrs should return nil, got %v", got)
 	}
-	if got := errkit.AttrsOf(stderrors.New("plain")); got != nil {
+	if got := errkind.AttrsOf(stderrors.New("plain")); got != nil {
 		t.Fatalf("plain error should return nil, got %v", got)
 	}
 }
 
-// --- AllAttrs 穿过非 errkit 节点 ------------------------------
+// --- AllAttrs 穿过非 errkind 节点 ------------------------------
 
-func TestAllAttrsThroughNonErrkitWrap(t *testing.T) {
+func TestAllAttrsThroughNonErrkindWrap(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "allattrs_chain")
-	inner := K.New(errkit.With("a", 1))
-	// 用标准 fmt.Errorf 包一层非 errkit, 验证 AllAttrs 能穿过
+	inner := K.New(errkind.With("a", 1))
+	// 用标准 fmt.Errorf 包一层非 errkind, 验证 AllAttrs 能穿过
 	mid := fmt.Errorf("mid: %w", inner)
-	if got := errkit.AllAttrs(mid); len(got) != 1 || got[0].Key != "a" {
-		t.Fatalf("should walk through non-errkit nodes, got %v", got)
+	if got := errkind.AllAttrs(mid); len(got) != 1 || got[0].Key != "a" {
+		t.Fatalf("should walk through non-errkind nodes, got %v", got)
 	}
 	// 错误链终止时也要正常退出
-	if got := errkit.AllAttrs(stderrors.New("plain")); got != nil {
+	if got := errkind.AllAttrs(stderrors.New("plain")); got != nil {
 		t.Fatalf("plain should be nil, got %v", got)
 	}
-	if got := errkit.AllAttrs(nil); got != nil {
+	if got := errkind.AllAttrs(nil); got != nil {
 		t.Fatalf("nil should be nil, got %v", got)
 	}
 }
 
-// --- Kind.Is 在非 errkit 链上正确返回 false -------------------
+// --- Kind.Is 在非 errkind 链上正确返回 false -------------------
 
-func TestKindIsOnNonErrkit(t *testing.T) {
+func TestKindIsOnNonErrkind(t *testing.T) {
 	r := newReg()
 	K := r.Define(1, "is_negative")
 	if K.Is(stderrors.New("plain")) {
@@ -553,14 +553,14 @@ func TestKindIsOnNonErrkit(t *testing.T) {
 
 func TestPackageLevelRegistry(t *testing.T) {
 	// 用一个不太可能冲突的 code 段
-	K := errkit.Define(900001, "pkg_level_define")
-	if got := errkit.LookupCode(900001); got != K {
+	K := errkind.Define(900001, "pkg_level_define")
+	if got := errkind.LookupCode(900001); got != K {
 		t.Fatal("LookupCode")
 	}
-	if got := errkit.LookupName("pkg_level_define"); got != K {
+	if got := errkind.LookupName("pkg_level_define"); got != K {
 		t.Fatal("LookupName")
 	}
-	all := errkit.Kinds()
+	all := errkind.Kinds()
 	found := false
 	for _, k := range all {
 		if k == K {
@@ -578,15 +578,15 @@ func TestPackageLevelRegistry(t *testing.T) {
 type fakeTracer struct{ msg string }
 
 func (f *fakeTracer) Error() string             { return f.msg }
-func (f *fakeTracer) StackTrace() []errkit.Frame { return []errkit.Frame{{Function: "fake", File: "f.go", Line: 1}} }
+func (f *fakeTracer) StackTrace() []errkind.Frame { return []errkind.Frame{{Function: "fake", File: "f.go", Line: 1}} }
 
 func TestHasStackPreventsRecapture(t *testing.T) {
-	errkit.SetCaptureStack(true)
-	t.Cleanup(func() { errkit.SetCaptureStack(false) })
+	errkind.SetCaptureStack(true)
+	t.Cleanup(func() { errkind.SetCaptureStack(false) })
 
 	r := newReg()
 	K := r.Define(1, "has_stack_skip")
-	e := K.Wrap(&fakeTracer{msg: "boom"}).(errkit.Tracer)
+	e := K.Wrap(&fakeTracer{msg: "boom"}).(errkind.Tracer)
 
 	// 新 *kerr 因为 cause 已实现 Tracer, 自身不抓栈
 	if len(e.StackTrace()) != 0 {
@@ -597,7 +597,7 @@ func TestHasStackPreventsRecapture(t *testing.T) {
 // --- Frame.String 格式 ---------------------------------------
 
 func TestFrameString(t *testing.T) {
-	f := errkit.Frame{Function: "pkg.Func", File: "/x/y.go", Line: 42}
+	f := errkind.Frame{Function: "pkg.Func", File: "/x/y.go", Line: 42}
 	want := "pkg.Func\n\t/x/y.go:42"
 	if f.String() != want {
 		t.Fatalf("want %q got %q", want, f.String())

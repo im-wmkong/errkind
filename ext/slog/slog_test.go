@@ -8,16 +8,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
-	httpext "github.com/im-wmkong/errkit/ext/http"
-	slogext "github.com/im-wmkong/errkit/ext/slog"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
+	httpext "github.com/im-wmkong/errkind/ext/http"
+	slogext "github.com/im-wmkong/errkind/ext/slog"
 )
 
 func TestErrFull(t *testing.T) {
-	r := errkit.NewRegistry()
-	K := r.Define(1, "x", errkit.DefaultMessage("默认"))
-	err := K.Wrap(stderrors.New("root"), errkit.With("uid", 9))
+	r := errkind.NewRegistry()
+	K := r.Define(1, "x", errkind.DefaultMessage("默认"))
+	err := K.Wrap(stderrors.New("root"), errkind.With("uid", 9))
 	err = httpext.Status(404)(err)
 	err = grpcext.Code(5)(err)
 

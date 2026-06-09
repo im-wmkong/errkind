@@ -1,4 +1,4 @@
-package errkit
+package errkind
 
 import (
 	"bytes"
@@ -84,7 +84,7 @@ func (e *kerr) Format(s fmt.State, verb rune) {
 //	 "attrs":{"uid":42},"cause":"sql: no rows in result set"}
 //
 // 这是最通用的方案: 不含 HTTP/gRPC 等协议字段 (那些由 ext 层负责),
-// 仅输出 core 的领域字段。cause 若也是 errkit 错误则嵌套展开, 否则取字符串。
+// 仅输出 core 的领域字段。cause 若也是 errkind 错误则嵌套展开, 否则取字符串。
 //
 // attrs 按插入顺序输出 (手写而非 map[string]any, 保证顺序稳定)。
 func (e *kerr) MarshalJSON() ([]byte, error) {

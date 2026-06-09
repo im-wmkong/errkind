@@ -4,20 +4,20 @@ import (
 	stderrors "errors"
 	"testing"
 
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
-	grpcint "github.com/im-wmkong/errkit/integration/grpc"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
+	grpcint "github.com/im-wmkong/errkind/integration/grpc"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 func TestToStatusFull(t *testing.T) {
-	r := errkit.NewRegistry()
-	K := r.Define(10001, "user_not_found", errkit.DefaultMessage("用户不存在"))
+	r := errkind.NewRegistry()
+	K := r.Define(10001, "user_not_found", errkind.DefaultMessage("用户不存在"))
 	cause := stderrors.New("sql: no rows in result set")
 	err := grpcext.Code(uint32(codes.NotFound))(
-		K.Wrap(cause, errkit.With("uid", 42)),
+		K.Wrap(cause, errkind.With("uid", 42)),
 	)
 
 	st := grpcint.ToStatus(err)
@@ -39,13 +39,13 @@ func TestToStatusFull(t *testing.T) {
 	if info.Reason != "user_not_found" {
 		t.Fatalf("reason: %q", info.Reason)
 	}
-	if info.Domain != "errkit" {
+	if info.Domain != "errkind" {
 		t.Fatalf("domain: %q", info.Domain)
 	}
 	if info.Metadata["uid"] != "42" {
 		t.Fatalf("metadata uid: %q", info.Metadata["uid"])
 	}
-	if info.Metadata["_errkit.code"] != "10001" {
+	if info.Metadata["_errkind.code"] != "10001" {
 		t.Fatalf("business code missing: %v", info.Metadata)
 	}
 }
@@ -57,10 +57,10 @@ func TestToStatusNil(t *testing.T) {
 }
 
 func TestRoundTripPreservesFields(t *testing.T) {
-	r := errkit.NewRegistry()
-	K := r.Define(10001, "user_not_found", errkit.DefaultMessage("用户不存在"))
+	r := errkind.NewRegistry()
+	K := r.Define(10001, "user_not_found", errkind.DefaultMessage("用户不存在"))
 	src := grpcext.Code(uint32(codes.NotFound))(
-		K.New(errkit.With("uid", 42)),
+		K.New(errkind.With("uid", 42)),
 	)
 
 	st := grpcint.ToStatus(src)
@@ -117,15 +117,15 @@ func TestFromStatusWithoutErrorInfo(t *testing.T) {
 }
 
 func TestIsReasonOnLocalErr(t *testing.T) {
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(1, "x")
 	if !grpcint.IsReason(K.New(), "x") {
-		t.Fatal("local errkit kind should match IsReason")
+		t.Fatal("local errkind kind should match IsReason")
 	}
 }
 
 func TestCodeOfFallbackToLocal(t *testing.T) {
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(1, "x")
 	if c, ok := grpcint.CodeOf(K.New()); !ok || c != 1 {
 		t.Fatalf("local CodeOf fallback failed: %v %v", c, ok)

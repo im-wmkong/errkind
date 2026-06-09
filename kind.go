@@ -1,4 +1,4 @@
-package errkit
+package errkind
 
 // Kind 是错误的"身份"—— code + name 组成的全局单例, 永远不变。
 //

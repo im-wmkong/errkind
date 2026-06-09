@@ -1,13 +1,13 @@
 // Package http 把 HTTP 状态码装饰到错误链上。
 //
-//	import httpext "github.com/im-wmkong/errkit/ext/http"
+//	import httpext "github.com/im-wmkong/errkind/ext/http"
 //
-//	err := UserNotFound.New(errkit.Message("..."))
+//	err := UserNotFound.New(errkind.Message("..."))
 //	err  = httpext.Status(404)(err)            // 装饰一次
 //
 //	if c, ok := httpext.StatusOf(err); ok { w.WriteHeader(c) }
 //
-// 设计要点: 这是一个独立的 wrapper, 不依赖 errkit 内部任何"槽位"。
+// 设计要点: 这是一个独立的 wrapper, 不依赖 errkind 内部任何"槽位"。
 // errors.As 自然能找到它, errors.Is 自然能穿透它。
 package http
 
@@ -16,7 +16,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/im-wmkong/errkit"
+	"github.com/im-wmkong/errkind"
 )
 
 // withStatus 是装饰器产生的具体错误; 不导出, 强制走构造函数。
@@ -59,7 +59,7 @@ type Body struct {
 	Message string `json:"message"`
 }
 
-// BodyOf 把 errkit 错误抽成 Body, 适合自定义渲染时机/形状的场景:
+// BodyOf 把 errkind 错误抽成 Body, 适合自定义渲染时机/形状的场景:
 //
 //	b := httpext.BodyOf(err)
 //	b.Message = i18n.T(b.Name)        // 比如做翻译
@@ -68,11 +68,11 @@ func BodyOf(err error) Body {
 	if err == nil {
 		return Body{}
 	}
-	b := Body{Message: errkit.MessageOf(err)}
-	if c, ok := errkit.CodeOf(err); ok {
+	b := Body{Message: errkind.MessageOf(err)}
+	if c, ok := errkind.CodeOf(err); ok {
 		b.Code = uint32(c)
 	}
-	if n, ok := errkit.NameOf(err); ok {
+	if n, ok := errkind.NameOf(err); ok {
 		b.Name = n
 	}
 	return b

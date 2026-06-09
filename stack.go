@@ -1,4 +1,4 @@
-package errkit
+package errkind
 
 import (
 	"runtime"

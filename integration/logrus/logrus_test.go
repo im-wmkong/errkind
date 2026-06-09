@@ -6,17 +6,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
-	httpext "github.com/im-wmkong/errkit/ext/http"
-	logrusext "github.com/im-wmkong/errkit/integration/logrus"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
+	httpext "github.com/im-wmkong/errkind/ext/http"
+	logrusext "github.com/im-wmkong/errkind/integration/logrus"
 	"github.com/sirupsen/logrus"
 )
 
 func TestFieldsFull(t *testing.T) {
-	r := errkit.NewRegistry()
-	K := r.Define(1, "x", errkit.DefaultMessage("默认"))
-	err := K.Wrap(stderrors.New("root"), errkit.With("uid", 9))
+	r := errkind.NewRegistry()
+	K := r.Define(1, "x", errkind.DefaultMessage("默认"))
+	err := K.Wrap(stderrors.New("root"), errkind.With("uid", 9))
 	err = httpext.Status(404)(err)
 	err = grpcext.Code(5)(err)
 
@@ -50,9 +50,9 @@ func TestFieldsNil(t *testing.T) {
 }
 
 func TestFieldsCustomPrefix(t *testing.T) {
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(2, "y")
-	err := K.New(errkit.Message("oops"))
+	err := K.New(errkind.Message("oops"))
 
 	f := logrusext.FieldsWithPrefix("biz", err)
 	if f["biz.name"] != "y" || f["biz.message"] != "oops" {

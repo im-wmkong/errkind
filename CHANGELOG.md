@@ -53,9 +53,9 @@
 
 ### Known limitations
 
-- `errors.Is(err, kind)` **不支持** (`*Kind` 不实现 `error`); 请用 `kind.Is(err)` 或 `errkit.CodeOf(err)`
+- `errors.Is(err, kind)` **不支持** (`*Kind` 不实现 `error`); 请用 `kind.Is(err)` 或 `errkind.CodeOf(err)`
 - 暂未提供错误码冲突的静态检查工具 (规划在 v0.x)
 - 暂未提供 i18n / metrics 自动发射 (规划在 v0.x)
 
-[Unreleased]: https://github.com/im-wmkong/errkit/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/im-wmkong/errkit/releases/tag/v0.1.0
+[Unreleased]: https://github.com/im-wmkong/errkind/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/im-wmkong/errkind/releases/tag/v0.1.0

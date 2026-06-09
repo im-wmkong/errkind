@@ -1,4 +1,4 @@
-// Package zerolog 把 errkit 错误结构化输出到 github.com/rs/zerolog。
+// Package zerolog 把 errkind 错误结构化输出到 github.com/rs/zerolog。
 //
 //	logger.Error().Func(zerologext.Err(err)).Msg("request failed")
 //
@@ -11,9 +11,9 @@
 package zerolog
 
 import (
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
-	httpext "github.com/im-wmkong/errkit/ext/http"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
+	httpext "github.com/im-wmkong/errkind/ext/http"
 	"github.com/rs/zerolog"
 )
 
@@ -39,16 +39,16 @@ func Dict(err error) *zerolog.Event {
 	if err == nil {
 		return d
 	}
-	if c, ok := errkit.CodeOf(err); ok {
+	if c, ok := errkind.CodeOf(err); ok {
 		d = d.Uint32("code", uint32(c))
 	}
-	if n, ok := errkit.NameOf(err); ok {
+	if n, ok := errkind.NameOf(err); ok {
 		d = d.Str("name", n)
 	}
-	if msg := errkit.MessageOf(err); msg != "" {
+	if msg := errkind.MessageOf(err); msg != "" {
 		d = d.Str("message", msg)
 	}
-	if all := errkit.AllAttrs(err); len(all) > 0 {
+	if all := errkind.AllAttrs(err); len(all) > 0 {
 		ad := zerolog.Dict()
 		for _, kv := range all {
 			ad = ad.Interface(kv.Key, kv.Val)
@@ -61,17 +61,17 @@ func Dict(err error) *zerolog.Event {
 	if c, ok := grpcext.CodeOf(err); ok {
 		d = d.Uint32("grpc_code", uint32(c))
 	}
-	if cause := unwrapNonErrkit(err); cause != nil {
+	if cause := unwrapNonErrkind(err); cause != nil {
 		d = d.Str("cause", cause.Error())
 	}
 	return d
 }
 
-// unwrapNonErrkit 找到错误链上"最底层"的非 nil cause; 用于 cause 字段输出。
-func unwrapNonErrkit(err error) error {
+// unwrapNonErrkind 找到错误链上"最底层"的非 nil cause; 用于 cause 字段输出。
+func unwrapNonErrkind(err error) error {
 	var last error
 	for cur := err; cur != nil; {
-		if _, ok := errkit.CodeOf(cur); !ok {
+		if _, ok := errkind.CodeOf(cur); !ok {
 			last = cur
 		}
 		u, ok := cur.(interface{ Unwrap() error })

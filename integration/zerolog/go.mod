@@ -1,11 +1,11 @@
-module github.com/im-wmkong/errkit/integration/zerolog
+module github.com/im-wmkong/errkind/integration/zerolog
 
 go 1.23
 
 toolchain go1.23.10
 
 require (
-	github.com/im-wmkong/errkit v0.0.0
+	github.com/im-wmkong/errkind v0.0.0
 	github.com/rs/zerolog v1.33.0
 )
 
@@ -15,4 +15,4 @@ require (
 	golang.org/x/sys v0.12.0 // indirect
 )
 
-replace github.com/im-wmkong/errkit => ../..
+replace github.com/im-wmkong/errkind => ../..

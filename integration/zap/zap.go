@@ -1,4 +1,4 @@
-// Package zap 把 errkit 错误结构化输出到 go.uber.org/zap。
+// Package zap 把 errkind 错误结构化输出到 go.uber.org/zap。
 //
 //	logger.Error("request failed", zapext.Err(err))
 //
@@ -11,9 +11,9 @@
 package zap
 
 import (
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
-	httpext "github.com/im-wmkong/errkit/ext/http"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
+	httpext "github.com/im-wmkong/errkind/ext/http"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -38,16 +38,16 @@ func (m marshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	if m.err == nil {
 		return nil
 	}
-	if c, ok := errkit.CodeOf(m.err); ok {
+	if c, ok := errkind.CodeOf(m.err); ok {
 		enc.AddUint32("code", uint32(c))
 	}
-	if n, ok := errkit.NameOf(m.err); ok {
+	if n, ok := errkind.NameOf(m.err); ok {
 		enc.AddString("name", n)
 	}
-	if msg := errkit.MessageOf(m.err); msg != "" {
+	if msg := errkind.MessageOf(m.err); msg != "" {
 		enc.AddString("message", msg)
 	}
-	if all := errkit.AllAttrs(m.err); len(all) > 0 {
+	if all := errkind.AllAttrs(m.err); len(all) > 0 {
 		_ = enc.AddObject("attrs", attrsMarshaler(all))
 	}
 	if c, ok := httpext.StatusOf(m.err); ok {
@@ -56,13 +56,13 @@ func (m marshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	if c, ok := grpcext.CodeOf(m.err); ok {
 		enc.AddUint32("grpc_code", uint32(c))
 	}
-	if cause := unwrapNonErrkit(m.err); cause != nil {
+	if cause := unwrapNonErrkind(m.err); cause != nil {
 		enc.AddString("cause", cause.Error())
 	}
 	return nil
 }
 
-type attrsMarshaler []errkit.Attr
+type attrsMarshaler []errkind.Attr
 
 func (a attrsMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	for _, kv := range a {
@@ -73,11 +73,11 @@ func (a attrsMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	return nil
 }
 
-// unwrapNonErrkit 找到错误链上"最底层"的非 nil cause; 用于 cause 字段输出。
-func unwrapNonErrkit(err error) error {
+// unwrapNonErrkind 找到错误链上"最底层"的非 nil cause; 用于 cause 字段输出。
+func unwrapNonErrkind(err error) error {
 	var last error
 	for cur := err; cur != nil; {
-		if _, ok := errkit.CodeOf(cur); !ok {
+		if _, ok := errkind.CodeOf(cur); !ok {
 			last = cur
 		}
 		u, ok := cur.(interface{ Unwrap() error })

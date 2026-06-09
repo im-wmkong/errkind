@@ -4,12 +4,12 @@ import (
 	stderrors "errors"
 	"testing"
 
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
 )
 
 func TestCode(t *testing.T) {
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(1, "x")
 	err := grpcext.Code(5)(K.New())
 	if c, ok := grpcext.CodeOf(err); !ok || c != 5 {
@@ -31,7 +31,7 @@ func TestCodeOfPlain(t *testing.T) {
 
 // 验证装饰器 Unwrap 让错误链穿透 (errors.Is 找到 cause)。
 func TestUnwrapThroughCodeDecorator(t *testing.T) {
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(1, "x")
 	cause := stderrors.New("boom")
 	err := grpcext.Code(5)(K.Wrap(cause))

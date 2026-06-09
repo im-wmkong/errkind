@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/im-wmkong/errkit"
-	httpext "github.com/im-wmkong/errkit/ext/http"
+	"github.com/im-wmkong/errkind"
+	httpext "github.com/im-wmkong/errkind/ext/http"
 )
 
 func TestStatusBasic(t *testing.T) {
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(1, "x")
 	err := httpext.Status(404)(K.New())
 
@@ -28,8 +28,8 @@ func TestStatusOnNil(t *testing.T) {
 	}
 }
 
-func TestStatusUnwrapsToErrkit(t *testing.T) {
-	r := errkit.NewRegistry()
+func TestStatusUnwrapsToErrkind(t *testing.T) {
+	r := errkind.NewRegistry()
 	K := r.Define(1, "x")
 	cause := stderrors.New("boom")
 	err := httpext.Status(409)(K.Wrap(cause))
@@ -49,10 +49,10 @@ func TestStatusOfPlainError(t *testing.T) {
 }
 
 func TestRenderWithStatus(t *testing.T) {
-	r := errkit.NewRegistry()
-	K := r.Define(10001, "user_not_found", errkit.DefaultMessage("用户不存在"))
+	r := errkind.NewRegistry()
+	K := r.Define(10001, "user_not_found", errkind.DefaultMessage("用户不存在"))
 	err := httpext.Status(http.StatusNotFound)(
-		K.New(errkit.With("uid", 42)), // attrs 故意不应被渲染
+		K.New(errkind.With("uid", 42)), // attrs 故意不应被渲染
 	)
 
 	rec := httptest.NewRecorder()

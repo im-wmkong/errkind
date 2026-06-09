@@ -1,8 +1,8 @@
-package errkit
+package errkind
 
 import "fmt"
 
-// Option 作用于 errkit 错误实例自身 (message / attrs)。
+// Option 作用于 errkind 错误实例自身 (message / attrs)。
 //
 // 协议相关扩展 (HTTP / gRPC / ...) 不通过 Option, 而是由 ext 包独立装饰器实现,
 // 这两个机制不混用——避免一个泛槽位变成什么都往里塞的字典。

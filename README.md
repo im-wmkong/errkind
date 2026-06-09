@@ -1,7 +1,7 @@
-# errkit
+# errkind
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/im-wmkong/errkit.svg)](https://pkg.go.dev/github.com/im-wmkong/errkit)
-[![CI](https://github.com/im-wmkong/errkit/actions/workflows/ci.yml/badge.svg)](https://github.com/im-wmkong/errkit/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/im-wmkong/errkind.svg)](https://pkg.go.dev/github.com/im-wmkong/errkind)
+[![CI](https://github.com/im-wmkong/errkind/actions/workflows/ci.yml/badge.svg)](https://github.com/im-wmkong/errkind/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > A **business error modeling library** for Go 1.23+ — not an error-handling library, not a stack library, not a gRPC library, but a domain model for business errors.
@@ -28,7 +28,7 @@ The result: a clean domain model, a tiny API surface, and full compatibility wit
 ## Install
 
 ```bash
-go get github.com/im-wmkong/errkit
+go get github.com/im-wmkong/errkind
 ```
 
 Minimum Go version: **1.23**.
@@ -44,22 +44,22 @@ import (
     "log/slog"
     "os"
 
-    "github.com/im-wmkong/errkit"
-    httpext "github.com/im-wmkong/errkit/ext/http"
-    slogext "github.com/im-wmkong/errkit/ext/slog"
+    "github.com/im-wmkong/errkind"
+    httpext "github.com/im-wmkong/errkind/ext/http"
+    slogext "github.com/im-wmkong/errkind/ext/slog"
 )
 
 // 1. Identity: defined once, global singleton.
-var UserNotFound = errkit.Define(
+var UserNotFound = errkind.Define(
     10001,
     "user_not_found",
-    errkit.DefaultMessage("user not found"),
+    errkind.DefaultMessage("user not found"),
 )
 
 func getUser(id int64) error {
     cause := stderrors.New("sql: no rows in result set")
     // 2. Instance: each call yields a new error.
-    err := UserNotFound.Wrap(cause, errkit.With("uid", id))
+    err := UserNotFound.Wrap(cause, errkind.With("uid", id))
     // 3. ext decorator: protocol fields don't pollute core.
     return httpext.Status(404)(err)
 }
@@ -71,7 +71,7 @@ func main() {
     fmt.Println("Is UserNotFound:", UserNotFound.Is(err))
 
     // Pull out structured fields.
-    if c, ok := errkit.CodeOf(err); ok {
+    if c, ok := errkind.CodeOf(err); ok {
         fmt.Println("Code:", c)
     }
     if c, ok := httpext.StatusOf(err); ok {
@@ -98,8 +98,8 @@ Output:
 ### Define a Kind
 
 ```go
-var UserNotFound = errkit.Define(10001, "user_not_found",
-    errkit.DefaultMessage("user not found"),
+var UserNotFound = errkind.Define(10001, "user_not_found",
+    errkind.DefaultMessage("user not found"),
 )
 ```
 
@@ -126,17 +126,17 @@ Available options:
 UserNotFound.Is(err)                // true / false
 errors.Is(err, sql.ErrNoRows)       // standard library sees through cause
 
-c, ok := errkit.CodeOf(err)         // (Code, bool) — preferred
-n, ok := errkit.NameOf(err)         // (string, bool)
-msg   := errkit.MessageOf(err)      // falls back to err.Error() for non-errkit errors
-attrs := errkit.AttrsOf(err)        // outermost attrs (copy)
-flat  := errkit.AllAttrs(err)       // flattened across the chain, outer wins
+c, ok := errkind.CodeOf(err)         // (Code, bool) — preferred
+n, ok := errkind.NameOf(err)         // (string, bool)
+msg   := errkind.MessageOf(err)      // falls back to err.Error() for non-errkind errors
+attrs := errkind.AttrsOf(err)        // outermost attrs (copy)
+flat  := errkind.AllAttrs(err)       // flattened across the chain, outer wins
 ```
 
 ### Registry (test isolation / multi-tenant)
 
 ```go
-r := errkit.NewRegistry()
+r := errkind.NewRegistry()
 K := r.Define(1, "x")
 ```
 
@@ -147,9 +147,9 @@ Package-level `Define` / `Kinds` / `LookupCode` / `LookupName` use the default r
 A process-level switch, off by default:
 
 ```go
-errkit.SetCaptureStack(true)        // typically in main; enable in dev as needed
+errkind.SetCaptureStack(true)        // typically in main; enable in dev as needed
 
-if t, ok := err.(errkit.Tracer); ok {
+if t, ok := err.(errkind.Tracer); ok {
     for _, f := range t.StackTrace() { ... }
 }
 ```
@@ -173,7 +173,7 @@ Attrs are emitted in insertion order; an attr value that can't be serialized (e.
 
 ## Extensions
 
-errkit organizes extensions into two layers:
+errkind organizes extensions into two layers:
 
 - **`ext/`** — protocol decorators with **zero external dependencies**. Always available
   inside the main module. Use to attach status codes / telemetry names to the error chain.
@@ -194,7 +194,7 @@ errkit organizes extensions into two layers:
 | Module | Purpose | API |
 |---|---|---|
 | `integration/grpc` | gRPC `*status.Status` round-trip + interceptors | `ToStatus(err)` / `FromStatus(st)` / `UnaryServerInterceptor()` / `UnaryClientInterceptor()` |
-| `integration/otel` | Write errkit fields onto OTel spans | `RecordError(span, err)` / `Attributes(err)` |
+| `integration/otel` | Write errkind fields onto OTel spans | `RecordError(span, err)` / `Attributes(err)` |
 | `integration/zap` | go.uber.org/zap | `Err(err)` / `Object(key, err)` |
 | `integration/zerolog` | rs/zerolog | `Err(err)` / `Field(key, err)` / `Dict(err)` |
 | `integration/logrus` | sirupsen/logrus | `Fields(err)` / `FieldsWithPrefix(prefix, err)` |
@@ -214,7 +214,7 @@ logger.WithFields(logrusext.Fields(err)).Error("request failed")
 
 ## Comparison with Other Libraries
 
-| | errkit | `pkg/errors` | `cockroachdb/errors` | stdlib |
+| | errkind | `pkg/errors` | `cockroachdb/errors` | stdlib |
 |---|---|---|---|---|
 | Business error code | ✅ | ❌ | partial (string hint) | ❌ |
 | Identity / Instance separation | ✅ | ❌ | ❌ | ❌ |
@@ -224,7 +224,7 @@ logger.WithFields(logrusext.Fields(err)).Error("request failed")
 | HTTP / gRPC integration | decorator | ❌ | built-in | ❌ |
 | Zero-dep core package | ✅ | ✅ | ❌ (heavy) | ✅ |
 
-**When to choose errkit**: business error codes need to be sliced by frontend / clients / OTel dimensions, and you want a clean domain model with open extension points.
+**When to choose errkind**: business error codes need to be sliced by frontend / clients / OTel dimensions, and you want a clean domain model with open extension points.
 
 **When not to**: you only want to attach a stack or a wrapping message to an error — `fmt.Errorf("%w", err)` is enough.
 
@@ -255,7 +255,7 @@ Run on your own box: `go test -bench=. -benchmem ./...`
 ## Known Behavior Notes
 
 - `Wrap(nil, ...)` returns `nil`, matching `fmt.Errorf("%w", nil)`.
-- `errors.Is(err, kind)` is **not supported** (`*Kind` does not implement `error`); use `kind.Is(err)` or `errkit.CodeOf(err)`.
+- `errors.Is(err, kind)` is **not supported** (`*Kind` does not implement `error`); use `kind.Is(err)` or `errkind.CodeOf(err)`.
 - `Define` panics on duplicates; either `code` or `name` colliding, or an empty `name`, is rejected.
 - `AttrsOf` returns a copy — mutations don't affect the original error; same goes for `AllAttrs`.
 

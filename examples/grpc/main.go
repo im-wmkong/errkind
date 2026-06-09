@@ -1,11 +1,11 @@
-// 演示 errkit 错误如何映射成 *status.Status (含 ErrorInfo details)。
+// 演示 errkind 错误如何映射成 *status.Status (含 ErrorInfo details)。
 //
 //	go run ./examples/grpc
 //
 // 关键点:
-//   - 业务层只产 errkit 错误 + ext/grpc 装饰, 不直接构造 *status.Status。
+//   - 业务层只产 errkind 错误 + ext/grpc 装饰, 不直接构造 *status.Status。
 //   - toStatus 是唯一的"协议出口", 决定 grpc code 与 ErrorInfo 形状。
-//   - ErrorInfo.Reason = errkit name, Metadata = errkit attrs (字符串化)。
+//   - ErrorInfo.Reason = errkind name, Metadata = errkind attrs (字符串化)。
 //
 // 在真实服务里, 把 toStatus 包进 grpc.UnaryServerInterceptor 即可:
 //
@@ -22,19 +22,19 @@ import (
 	stderrors "errors"
 	"fmt"
 
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 var (
-	UserNotFound = errkit.Define(10001, "user_not_found",
-		errkit.DefaultMessage("用户不存在"),
+	UserNotFound = errkind.Define(10001, "user_not_found",
+		errkind.DefaultMessage("用户不存在"),
 	)
-	InvalidArgument = errkit.Define(10002, "invalid_argument",
-		errkit.DefaultMessage("参数非法"),
+	InvalidArgument = errkind.Define(10002, "invalid_argument",
+		errkind.DefaultMessage("参数非法"),
 	)
 )
 
@@ -43,22 +43,22 @@ var errNoRows = stderrors.New("sql: no rows in result set")
 func getUser(id int64) error {
 	if id <= 0 {
 		return grpcext.Code(uint32(codes.InvalidArgument))(
-			InvalidArgument.New(errkit.With("id", id)),
+			InvalidArgument.New(errkind.With("id", id)),
 		)
 	}
 	if id == 999 {
 		return grpcext.Code(uint32(codes.NotFound))(
-			UserNotFound.Wrap(errNoRows, errkit.With("uid", id)),
+			UserNotFound.Wrap(errNoRows, errkind.With("uid", id)),
 		)
 	}
 	return nil
 }
 
-// toStatus 把 errkit 错误映射成 gRPC *status.Status。
+// toStatus 把 errkind 错误映射成 gRPC *status.Status。
 //
 //	code     <- ext/grpc 装饰; 没有则 codes.Unknown
-//	message  <- errkit.MessageOf
-//	details  <- ErrorInfo{ Reason: name, Domain: "errkit", Metadata: attrs }
+//	message  <- errkind.MessageOf
+//	details  <- ErrorInfo{ Reason: name, Domain: "errkind", Metadata: attrs }
 func toStatus(err error) *status.Status {
 	if err == nil {
 		return nil
@@ -67,13 +67,13 @@ func toStatus(err error) *status.Status {
 	if g, ok := grpcext.CodeOf(err); ok {
 		c = codes.Code(g)
 	}
-	st := status.New(c, errkit.MessageOf(err))
+	st := status.New(c, errkind.MessageOf(err))
 
-	info := &errdetails.ErrorInfo{Domain: "errkit", Metadata: map[string]string{}}
-	if n, ok := errkit.NameOf(err); ok {
+	info := &errdetails.ErrorInfo{Domain: "errkind", Metadata: map[string]string{}}
+	if n, ok := errkind.NameOf(err); ok {
 		info.Reason = n
 	}
-	for _, kv := range errkit.AllAttrs(err) {
+	for _, kv := range errkind.AllAttrs(err) {
 		info.Metadata[kv.Key] = fmt.Sprint(kv.Val)
 	}
 	if d, derr := st.WithDetails(info); derr == nil {

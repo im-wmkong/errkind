@@ -1,4 +1,4 @@
-package errkit
+package errkind
 
 import (
 	"fmt"
@@ -27,7 +27,7 @@ func NewRegistry() *Registry {
 // Define 注册并返回一个新的 Kind; 重复 code/name 立即 panic。
 func (r *Registry) Define(code Code, name string, opts ...KindOption) *Kind {
 	if name == "" {
-		panic("errkit: Define name must not be empty")
+		panic("errkind: Define name must not be empty")
 	}
 	k := &Kind{code: code, name: name}
 	for _, o := range opts {
@@ -37,11 +37,11 @@ func (r *Registry) Define(code Code, name string, opts ...KindOption) *Kind {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existed, ok := r.byCode[code]; ok {
-		panic(fmt.Sprintf("errkit: duplicate code %d (registered as %q, new %q)",
+		panic(fmt.Sprintf("errkind: duplicate code %d (registered as %q, new %q)",
 			code, existed.name, name))
 	}
 	if existed, ok := r.byName[name]; ok {
-		panic(fmt.Sprintf("errkit: duplicate name %q (registered with code %d, new %d)",
+		panic(fmt.Sprintf("errkind: duplicate name %q (registered with code %d, new %d)",
 			name, existed.code, code))
 	}
 	r.byCode[code] = k

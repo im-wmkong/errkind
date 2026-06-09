@@ -1,4 +1,4 @@
-// 演示 errkit 在 net/http 服务里如何统一渲染错误响应。
+// 演示 errkind 在 net/http 服务里如何统一渲染错误响应。
 //
 //	go run ./examples/http
 //	curl -i http://127.0.0.1:8080/user?id=42        # 200
@@ -6,7 +6,7 @@
 //	curl -i http://127.0.0.1:8080/user?id=999       # 404
 //
 // 关键点:
-//   - 业务层只产 errkit 错误 + ext/http 装饰, 不直接碰 ResponseWriter。
+//   - 业务层只产 errkind 错误 + ext/http 装饰, 不直接碰 ResponseWriter。
 //   - httpext.Render 是协议出口, 决定 status + body 形状, 只暴露 code/name/message。
 //   - 服务端日志保留全部信息 (含 cause/attrs), 由 slogext 处理。
 package main
@@ -18,20 +18,20 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/im-wmkong/errkit"
-	httpext "github.com/im-wmkong/errkit/ext/http"
-	slogext "github.com/im-wmkong/errkit/ext/slog"
+	"github.com/im-wmkong/errkind"
+	httpext "github.com/im-wmkong/errkind/ext/http"
+	slogext "github.com/im-wmkong/errkind/ext/slog"
 )
 
 var (
-	UserNotFound = errkit.Define(10001, "user_not_found",
-		errkit.DefaultMessage("用户不存在"),
+	UserNotFound = errkind.Define(10001, "user_not_found",
+		errkind.DefaultMessage("用户不存在"),
 	)
-	InvalidArgument = errkit.Define(10002, "invalid_argument",
-		errkit.DefaultMessage("参数非法"),
+	InvalidArgument = errkind.Define(10002, "invalid_argument",
+		errkind.DefaultMessage("参数非法"),
 	)
-	Internal = errkit.Define(10500, "internal",
-		errkit.DefaultMessage("内部错误"),
+	Internal = errkind.Define(10500, "internal",
+		errkind.DefaultMessage("内部错误"),
 	)
 )
 
@@ -47,13 +47,13 @@ func fakeDB(id int64) error {
 func getUser(id int64) error {
 	if id <= 0 {
 		return httpext.Status(http.StatusBadRequest)(
-			InvalidArgument.New(errkit.With("id", id)),
+			InvalidArgument.New(errkind.With("id", id)),
 		)
 	}
 	if err := fakeDB(id); err != nil {
 		if stderrors.Is(err, errNoRows) {
 			return httpext.Status(http.StatusNotFound)(
-				UserNotFound.Wrap(err, errkit.With("uid", id)),
+				UserNotFound.Wrap(err, errkind.With("uid", id)),
 			)
 		}
 		return httpext.Status(http.StatusInternalServerError)(

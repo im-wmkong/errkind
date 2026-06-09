@@ -4,12 +4,12 @@ import (
 	stderrors "errors"
 	"testing"
 
-	"github.com/im-wmkong/errkit"
-	otelext "github.com/im-wmkong/errkit/ext/otel"
+	"github.com/im-wmkong/errkind"
+	otelext "github.com/im-wmkong/errkind/ext/otel"
 )
 
 func TestNameOverride(t *testing.T) {
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(1, "kind_name")
 	err := otelext.Name("biz.x")(K.New())
 	if got := otelext.NameOf(err); got != "biz.x" {
@@ -18,7 +18,7 @@ func TestNameOverride(t *testing.T) {
 }
 
 func TestNameFallbackToKind(t *testing.T) {
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(1, "kind_name")
 	if got := otelext.NameOf(K.New()); got != "kind_name" {
 		t.Fatalf("fallback wrong: %s", got)
@@ -38,7 +38,7 @@ func TestNameOfPlainError(t *testing.T) {
 }
 
 func TestUnwrapThroughNameDecorator(t *testing.T) {
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(1, "x")
 	cause := stderrors.New("boom")
 	err := otelext.Name("biz.x")(K.Wrap(cause))

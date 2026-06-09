@@ -1,4 +1,4 @@
-// Package logrus 把 errkit 错误结构化输出到 github.com/sirupsen/logrus。
+// Package logrus 把 errkind 错误结构化输出到 github.com/sirupsen/logrus。
 //
 //	logger.WithFields(logrusext.Fields(err)).Error("request failed")
 //
@@ -13,9 +13,9 @@
 package logrus
 
 import (
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
-	httpext "github.com/im-wmkong/errkit/ext/http"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
+	httpext "github.com/im-wmkong/errkind/ext/http"
 	"github.com/sirupsen/logrus"
 )
 
@@ -38,16 +38,16 @@ func FieldsWithPrefix(prefix string, err error) logrus.Fields {
 	if p != "" {
 		p = prefix + "."
 	}
-	if c, ok := errkit.CodeOf(err); ok {
+	if c, ok := errkind.CodeOf(err); ok {
 		f[p+"code"] = uint32(c)
 	}
-	if n, ok := errkit.NameOf(err); ok {
+	if n, ok := errkind.NameOf(err); ok {
 		f[p+"name"] = n
 	}
-	if msg := errkit.MessageOf(err); msg != "" {
+	if msg := errkind.MessageOf(err); msg != "" {
 		f[p+"message"] = msg
 	}
-	for _, kv := range errkit.AllAttrs(err) {
+	for _, kv := range errkind.AllAttrs(err) {
 		f[p+"attrs."+kv.Key] = kv.Val
 	}
 	if c, ok := httpext.StatusOf(err); ok {
@@ -56,17 +56,17 @@ func FieldsWithPrefix(prefix string, err error) logrus.Fields {
 	if c, ok := grpcext.CodeOf(err); ok {
 		f[p+"grpc_code"] = uint32(c)
 	}
-	if cause := unwrapNonErrkit(err); cause != nil {
+	if cause := unwrapNonErrkind(err); cause != nil {
 		f[p+"cause"] = cause.Error()
 	}
 	return f
 }
 
-// unwrapNonErrkit 找到错误链上"最底层"的非 nil cause; 用于 cause 字段输出。
-func unwrapNonErrkit(err error) error {
+// unwrapNonErrkind 找到错误链上"最底层"的非 nil cause; 用于 cause 字段输出。
+func unwrapNonErrkind(err error) error {
 	var last error
 	for cur := err; cur != nil; {
-		if _, ok := errkit.CodeOf(cur); !ok {
+		if _, ok := errkind.CodeOf(cur); !ok {
 			last = cur
 		}
 		u, ok := cur.(interface{ Unwrap() error })

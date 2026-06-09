@@ -1,6 +1,6 @@
 // Package otel 提供错误的 telemetry 命名约定 (用于 metrics / tracing 维度切分)。
 //
-// 默认 NameOf(err) 回退到 errkit Kind 的 Name(); 业务可显式覆盖:
+// 默认 NameOf(err) 回退到 errkind Kind 的 Name(); 业务可显式覆盖:
 //
 //	err = otelext.Name("biz.user.miss")(err)
 package otel
@@ -8,7 +8,7 @@ package otel
 import (
 	"errors"
 
-	"github.com/im-wmkong/errkit"
+	"github.com/im-wmkong/errkind"
 )
 
 type withName struct {
@@ -31,14 +31,14 @@ func Name(name string) func(error) error {
 
 // NameOf 解析顺序:
 //  1. 显式 Name() 装饰
-//  2. errkit Kind.Name()
+//  2. errkind Kind.Name()
 //  3. ""
 func NameOf(err error) string {
 	var t interface{ TelemetryName() string }
 	if errors.As(err, &t) {
 		return t.TelemetryName()
 	}
-	if name, ok := errkit.NameOf(err); ok {
+	if name, ok := errkind.NameOf(err); ok {
 		return name
 	}
 	return ""

@@ -1,7 +1,7 @@
 // Package grpc 把 gRPC 状态码装饰到错误链上。
 //
 //	import (
-//	    grpcext "github.com/im-wmkong/errkit/ext/grpc"
+//	    grpcext "github.com/im-wmkong/errkind/ext/grpc"
 //	    "google.golang.org/grpc/codes"
 //	)
 //

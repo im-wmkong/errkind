@@ -5,11 +5,11 @@ import (
 	stderrors "errors"
 	"testing"
 
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
-	httpext "github.com/im-wmkong/errkit/ext/http"
-	otelext "github.com/im-wmkong/errkit/ext/otel"
-	otelint "github.com/im-wmkong/errkit/integration/otel"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
+	httpext "github.com/im-wmkong/errkind/ext/http"
+	otelext "github.com/im-wmkong/errkind/ext/otel"
+	otelint "github.com/im-wmkong/errkind/integration/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -33,13 +33,13 @@ func attrMap(kvs []attribute.KeyValue) map[string]attribute.Value {
 }
 
 func TestRecordErrorFull(t *testing.T) {
-	r := errkit.NewRegistry()
-	K := r.Define(10001, "user_not_found", errkit.DefaultMessage("用户不存在"))
+	r := errkind.NewRegistry()
+	K := r.Define(10001, "user_not_found", errkind.DefaultMessage("用户不存在"))
 	cause := stderrors.New("sql: no rows in result set")
 	err := otelext.Name("biz.user.miss")(
 		grpcext.Code(5)(
 			httpext.Status(404)(
-				K.Wrap(cause, errkit.With("uid", 42)),
+				K.Wrap(cause, errkind.With("uid", 42)),
 			),
 		),
 	)
@@ -120,9 +120,9 @@ func TestAttrPrefixOverride(t *testing.T) {
 	otelint.AttrPrefix = "biz.err."
 	t.Cleanup(func() { otelint.AttrPrefix = old })
 
-	r := errkit.NewRegistry()
+	r := errkind.NewRegistry()
 	K := r.Define(1, "x")
-	a := otelint.Attributes(K.New(errkit.With("foo", "bar")))
+	a := otelint.Attributes(K.New(errkind.With("foo", "bar")))
 	got := attrMap(a)
 	if _, ok := got["biz.err.code"]; !ok {
 		t.Fatalf("prefix not honored: %v", got)

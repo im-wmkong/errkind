@@ -1,6 +1,6 @@
-// Package otel 把 errkit 错误的所有结构化字段写到 OpenTelemetry span 上。
+// Package otel 把 errkind 错误的所有结构化字段写到 OpenTelemetry span 上。
 //
-//	import otelint "github.com/im-wmkong/errkit/integration/otel"
+//	import otelint "github.com/im-wmkong/errkind/integration/otel"
 //
 //	if err != nil {
 //	    otelint.RecordError(span, err)
@@ -15,35 +15,35 @@
 //	    err.code, err.name, err.message,
 //	    err.http_status, err.grpc_code,
 //	    err.telemetry_name,
-//	    err.attrs.<k>...,                  // errkit AllAttrs 扁平展开
+//	    err.attrs.<k>...,                  // errkind AllAttrs 扁平展开
 //	)
 //
 // 与 ext/otel 的关系:
 //   - ext/otel 是"轻量层", 只提供 Name(...) 装饰器, 不 import OTel,
 //     适合所有项目零成本携带 telemetry name。
 //   - integration/otel 是"重量层", 真正接 go.opentelemetry.io/otel,
-//     提供 RecordError 一行接入。单独 module, 主 errkit 不被污染。
+//     提供 RecordError 一行接入。单独 module, 主 errkind 不被污染。
 package otel
 
 import (
 	"fmt"
 
-	"github.com/im-wmkong/errkit"
-	grpcext "github.com/im-wmkong/errkit/ext/grpc"
-	httpext "github.com/im-wmkong/errkit/ext/http"
-	otelext "github.com/im-wmkong/errkit/ext/otel"
+	"github.com/im-wmkong/errkind"
+	grpcext "github.com/im-wmkong/errkind/ext/grpc"
+	httpext "github.com/im-wmkong/errkind/ext/http"
+	otelext "github.com/im-wmkong/errkind/ext/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// AttrPrefix 是 errkit 业务字段写到 span 时的 namespace 前缀,
+// AttrPrefix 是 errkind 业务字段写到 span 时的 namespace 前缀,
 // 业务可在调用前覆盖 (例如改为 "biz.err.")。
 var AttrPrefix = "err."
 
 // RecordError 把 err 的所有结构化字段写到 span:
 //   - span.RecordError(err)
-//   - span.SetStatus(codes.Error, errkit.MessageOf)
+//   - span.SetStatus(codes.Error, errkind.MessageOf)
 //   - span.SetAttributes(err.* )
 //
 // 不抛 panic; nil span 或 nil err 直接返回。
@@ -52,7 +52,7 @@ func RecordError(span trace.Span, err error) {
 		return
 	}
 	span.RecordError(err)
-	span.SetStatus(codes.Error, errkit.MessageOf(err))
+	span.SetStatus(codes.Error, errkind.MessageOf(err))
 	if attrs := Attributes(err); len(attrs) > 0 {
 		span.SetAttributes(attrs...)
 	}
@@ -66,13 +66,13 @@ func Attributes(err error) []attribute.KeyValue {
 		return nil
 	}
 	out := make([]attribute.KeyValue, 0, 8)
-	if c, ok := errkit.CodeOf(err); ok {
+	if c, ok := errkind.CodeOf(err); ok {
 		out = append(out, attribute.Int64(AttrPrefix+"code", int64(c)))
 	}
-	if n, ok := errkit.NameOf(err); ok {
+	if n, ok := errkind.NameOf(err); ok {
 		out = append(out, attribute.String(AttrPrefix+"name", n))
 	}
-	if msg := errkit.MessageOf(err); msg != "" {
+	if msg := errkind.MessageOf(err); msg != "" {
 		out = append(out, attribute.String(AttrPrefix+"message", msg))
 	}
 	if c, ok := httpext.StatusOf(err); ok {
@@ -82,10 +82,10 @@ func Attributes(err error) []attribute.KeyValue {
 		out = append(out, attribute.Int64(AttrPrefix+"grpc_code", int64(c)))
 	}
 	if t := otelext.NameOf(err); t != "" {
-		// telemetry_name 与 errkit name 可能不同 (业务显式覆盖); 单独输出便于按维度切分。
+		// telemetry_name 与 errkind name 可能不同 (业务显式覆盖); 单独输出便于按维度切分。
 		out = append(out, attribute.String(AttrPrefix+"telemetry_name", t))
 	}
-	for _, kv := range errkit.AllAttrs(err) {
+	for _, kv := range errkind.AllAttrs(err) {
 		out = append(out, kvAttr(AttrPrefix+"attrs."+kv.Key, kv.Val))
 	}
 	return out

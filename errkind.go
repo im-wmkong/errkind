@@ -1,12 +1,12 @@
-// Package errkit 是业务错误建模库。
+// Package errkind 是业务错误建模库。
 //
 // 设计原则: Identity (Kind) 与 Instance (Error) 分离。
 //
-//	var UserNotFound = errkit.Define(10001, "user_not_found")
+//	var UserNotFound = errkind.Define(10001, "user_not_found")
 //
 //	return UserNotFound.Wrap(cause,
-//	    errkit.Message("用户不存在"),
-//	    errkit.With("uid", uid),
+//	    errkind.Message("用户不存在"),
+//	    errkind.With("uid", uid),
 //	)
 //
 // core 不感知 HTTP / gRPC / OTel / slog 等任何外部协议;
@@ -14,14 +14,14 @@
 // 由 errors.As 自然发现, 不依赖任何 core 内部"槽位"。
 //
 // 文件分布:
-//   - errkit.go    包文档 + 共享小类型 (Code / Attr)
+//   - errkind.go    包文档 + 共享小类型 (Code / Attr)
 //   - kind.go      Kind 身份对象
 //   - error.go     kerr 实例, 含 Format / MarshalJSON
 //   - option.go    Option 与内置 Message / With
 //   - registry.go  Registry + KindOption + 包级默认 Registry
 //   - extract.go   从 error 链中提取信息的 helper
 //   - stack.go     调用栈 (进程级开关)
-package errkit
+package errkind
 
 // Code 是业务错误码的类型。
 //
