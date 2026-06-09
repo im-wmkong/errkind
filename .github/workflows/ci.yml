@@ -27,13 +27,44 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: true
 
-      - name: go vet
-        run: go vet ./...
+      # 仓库内有多个独立 module (主 module + ext/zap, ext/zerolog, ext/logrus 等),
+      # `go test ./...` 不会跨 module, 必须遍历每个 go.mod 单独跑。
+      - name: go vet (all modules)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mod in $(find . -name go.mod -not -path "./.git/*" -print); do
+            dir=$(dirname "$mod")
+            echo "::group::vet $dir"
+            (cd "$dir" && go vet ./...)
+            echo "::endgroup::"
+          done
 
-      - name: go build
-        run: go build ./...
+      - name: go build (all modules)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mod in $(find . -name go.mod -not -path "./.git/*" -print); do
+            dir=$(dirname "$mod")
+            echo "::group::build $dir"
+            (cd "$dir" && go build ./...)
+            echo "::endgroup::"
+          done
 
-      - name: go test
+      - name: go test (all modules)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mod in $(find . -name go.mod -not -path "./.git/*" -print); do
+            dir=$(dirname "$mod")
+            echo "::group::test $dir"
+            (cd "$dir" && go test ./... -race -count=1)
+            echo "::endgroup::"
+          done
+
+      # 仅核心 module 上传覆盖率, ext 子 module 由 coverage 任务单独跑。
+      - name: go test (core, with coverage)
+        if: matrix.go == '1.23.x' && matrix.os == 'ubuntu-latest'
         run: go test ./... -race -count=1 -coverprofile=coverage.out -covermode=atomic
 
       - name: Upload coverage
@@ -42,6 +73,30 @@ jobs:
         with:
           name: coverage
           path: coverage.out
+
+  coverage-gate:
+    name: Coverage Gate (core >= 90%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Run core tests with coverage
+        run: go test ./... -count=1 -coverprofile=coverage.out -covermode=atomic
+
+      - name: Enforce coverage threshold
+        shell: bash
+        run: |
+          set -euo pipefail
+          threshold=90.0
+          # examples/ 是演示代码, 不参与覆盖率统计。
+          grep -v '/examples/' coverage.out > coverage.core.out
+          pct=$(go tool cover -func=coverage.core.out | awk '/^total:/ {print $3}' | sed 's/%//')
+          echo "core total coverage: ${pct}% (threshold: ${threshold}%)"
+          awk -v p="$pct" -v t="$threshold" 'BEGIN { if (p+0 < t+0) { exit 1 } }'
 
   staticcheck:
     name: Staticcheck
@@ -54,8 +109,16 @@ jobs:
           cache: true
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
-      - name: Run staticcheck
-        run: staticcheck ./...
+      - name: Run staticcheck (all modules)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mod in $(find . -name go.mod -not -path "./.git/*" -print); do
+            dir=$(dirname "$mod")
+            echo "::group::staticcheck $dir"
+            (cd "$dir" && staticcheck ./...)
+            echo "::endgroup::"
+          done
 
   govulncheck:
     name: Govulncheck
@@ -68,5 +131,13 @@ jobs:
           cache: true
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
-      - name: Run govulncheck
-        run: govulncheck ./...
+      - name: Run govulncheck (all modules)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mod in $(find . -name go.mod -not -path "./.git/*" -print); do
+            dir=$(dirname "$mod")
+            echo "::group::govulncheck $dir"
+            (cd "$dir" && govulncheck ./...)
+            echo "::endgroup::"
+          done
