@@ -29,38 +29,10 @@ jobs:
 
       # 仓库内有多个独立 module (主 module + ext/zap, ext/zerolog, ext/logrus 等),
       # `go test ./...` 不会跨 module, 必须遍历每个 go.mod 单独跑。
-      - name: go vet (all modules)
+      # 直接复用 scripts/test.sh, 避免本地与 CI 逻辑重复漂移; --group 启用日志折叠。
+      - name: vet / build / test (all modules)
         shell: bash
-        run: |
-          set -euo pipefail
-          for mod in $(find . -name go.mod -not -path "./.git/*" -print); do
-            dir=$(dirname "$mod")
-            echo "::group::vet $dir"
-            (cd "$dir" && go vet ./...)
-            echo "::endgroup::"
-          done
-
-      - name: go build (all modules)
-        shell: bash
-        run: |
-          set -euo pipefail
-          for mod in $(find . -name go.mod -not -path "./.git/*" -print); do
-            dir=$(dirname "$mod")
-            echo "::group::build $dir"
-            (cd "$dir" && go build ./...)
-            echo "::endgroup::"
-          done
-
-      - name: go test (all modules)
-        shell: bash
-        run: |
-          set -euo pipefail
-          for mod in $(find . -name go.mod -not -path "./.git/*" -print); do
-            dir=$(dirname "$mod")
-            echo "::group::test $dir"
-            (cd "$dir" && go test ./... -race -count=1)
-            echo "::endgroup::"
-          done
+        run: bash scripts/test.sh --group -race
 
       # 仅核心 module 上传覆盖率, ext 子 module 由 coverage 任务单独跑。
       - name: go test (core, with coverage)
