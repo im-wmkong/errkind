@@ -4,7 +4,8 @@
 [![CI](https://github.com/im-wmkong/errkind/actions/workflows/ci.yml/badge.svg)](https://github.com/im-wmkong/errkind/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> 一个面向 Go 1.23+ 的**业务错误建模库**——不是错误处理库, 不是 stack 库, 不是 grpc 库, 而是业务错误领域模型。
+> 一个面向 Go 1.24+ 的**业务错误建模库** —— 核心是错误的 *领域模型* (Kind 身份 / 实例分离, 零依赖)。
+> 协议适配 (HTTP / gRPC / OTel) 与日志库整合 (zap / zerolog / logrus) 由独立的 `ext/` 装饰器与 `integration/*` 子模块提供, 各自按需引入。
 
 简体中文 | [English](README.md)
 
@@ -31,7 +32,7 @@ Kind                  Error
 go get github.com/im-wmkong/errkind
 ```
 
-最低 Go 版本: **1.23**。
+最低 Go 版本: **1.24**。
 
 ## Quick Start
 
@@ -275,21 +276,21 @@ Markdown 输出片段:
 
 ## 性能
 
-Apple M-series, Go 1.23, `go test -bench=. -benchtime=2s`:
+Apple M-series, Go 1.24, `go test -bench=. -benchtime=2s`:
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---:|---:|---:|
-| `New()` 无 Option | 18 | 96 | 1 |
-| `New(Message)` | 20 | 96 | 1 |
-| `New(With×3)` | 89 | 320 | 4 |
-| `Wrap(cause, With)` | 37 | 128 | 2 |
-| `New()` 抓栈开 | 190 | 144 | 2 |
-| `Kind.Is(err)` | 1.3 | 0 | 0 |
-| `CodeOf(err)` | 43 | 8 | 1 |
-| `AllAttrs(深度3)` | 96 | 224 | 3 |
-| `fmt.Sprintf("%v", err)` | 70 | 80 | 3 |
-| `fmt.Sprintf("%+v", err)` 无栈 | 87 | 160 | 4 |
-| `json.Marshal(err)` | 817 | 448 | 15 |
+| `New()` 无 Option | 17 | 96 | 1 |
+| `New(Message)` | 17 | 96 | 1 |
+| `New(With×3)` | 75 | 320 | 4 |
+| `Wrap(cause, With)` | 31 | 128 | 2 |
+| `New()` 抓栈开 | 198 | 144 | 2 |
+| `Kind.Is(err)` | 1.2 | 0 | 0 |
+| `CodeOf(err)` | 41 | 8 | 1 |
+| `AllAttrs(深度3)` | 91 | 224 | 3 |
+| `fmt.Sprintf("%v", err)` | 66 | 80 | 3 |
+| `fmt.Sprintf("%+v", err)` 无栈 | 80 | 160 | 4 |
+| `json.Marshal(err)` | 717 | 448 | 15 |
 
 跑你自己的环境: `go test -bench=. -benchmem ./...`
 

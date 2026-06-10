@@ -4,7 +4,8 @@
 [![CI](https://github.com/im-wmkong/errkind/actions/workflows/ci.yml/badge.svg)](https://github.com/im-wmkong/errkind/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> A **business error modeling library** for Go 1.23+ — not an error-handling library, not a stack library, not a gRPC library, but a domain model for business errors.
+> A **business error modeling library** for Go 1.24+ — the core is a *domain model* of errors (Kind / instance separation, zero deps).
+> Protocol adapters (HTTP / gRPC / OTel) and logger integrations (zap / zerolog / logrus) live in the `ext/` decorators and `integration/*` submodules, each opted into on demand.
 
 [简体中文](README_CN.md) | English
 
@@ -31,7 +32,7 @@ The result: a clean domain model, a tiny API surface, and full compatibility wit
 go get github.com/im-wmkong/errkind
 ```
 
-Minimum Go version: **1.23**.
+Minimum Go version: **1.24**.
 
 ## Quick Start
 
@@ -276,21 +277,21 @@ they work even on code that fails to compile or has heavy framework deps.
 
 ## Performance
 
-Apple M-series, Go 1.23, `go test -bench=. -benchtime=2s`:
+Apple M-series, Go 1.24, `go test -bench=. -benchtime=2s`:
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---:|---:|---:|
-| `New()` no option | 18 | 96 | 1 |
-| `New(Message)` | 20 | 96 | 1 |
-| `New(With×3)` | 89 | 320 | 4 |
-| `Wrap(cause, With)` | 37 | 128 | 2 |
-| `New()` with stack capture | 190 | 144 | 2 |
-| `Kind.Is(err)` | 1.3 | 0 | 0 |
-| `CodeOf(err)` | 43 | 8 | 1 |
-| `AllAttrs(depth=3)` | 96 | 224 | 3 |
-| `fmt.Sprintf("%v", err)` | 70 | 80 | 3 |
-| `fmt.Sprintf("%+v", err)` no stack | 87 | 160 | 4 |
-| `json.Marshal(err)` | 817 | 448 | 15 |
+| `New()` no option | 17 | 96 | 1 |
+| `New(Message)` | 17 | 96 | 1 |
+| `New(With×3)` | 75 | 320 | 4 |
+| `Wrap(cause, With)` | 31 | 128 | 2 |
+| `New()` with stack capture | 198 | 144 | 2 |
+| `Kind.Is(err)` | 1.2 | 0 | 0 |
+| `CodeOf(err)` | 41 | 8 | 1 |
+| `AllAttrs(depth=3)` | 91 | 224 | 3 |
+| `fmt.Sprintf("%v", err)` | 66 | 80 | 3 |
+| `fmt.Sprintf("%+v", err)` no stack | 80 | 160 | 4 |
+| `json.Marshal(err)` | 717 | 448 | 15 |
 
 Run on your own box: `go test -bench=. -benchmem ./...`
 

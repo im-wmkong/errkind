@@ -1,8 +1,6 @@
 module github.com/im-wmkong/errkind/integration/logrus
 
-go 1.23
-
-toolchain go1.23.10
+go 1.24.0
 
 require (
 	github.com/im-wmkong/errkind v0.0.0

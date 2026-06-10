@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: ["1.23.x", "1.24.x", "1.25.x"]
+        go: ["1.24.x", "1.25.x"]
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
@@ -64,11 +64,11 @@ jobs:
 
       # 仅核心 module 上传覆盖率, ext 子 module 由 coverage 任务单独跑。
       - name: go test (core, with coverage)
-        if: matrix.go == '1.23.x' && matrix.os == 'ubuntu-latest'
+        if: matrix.go == '1.24.x' && matrix.os == 'ubuntu-latest'
         run: go test ./... -race -count=1 -coverprofile=coverage.out -covermode=atomic
 
       - name: Upload coverage
-        if: matrix.go == '1.23.x' && matrix.os == 'ubuntu-latest'
+        if: matrix.go == '1.24.x' && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: coverage
@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23.x"
+          go-version: "1.24.x"
           cache: true
 
       - name: Run core tests with coverage
@@ -92,8 +92,9 @@ jobs:
         run: |
           set -euo pipefail
           threshold=90.0
-          # examples/ 是演示代码, 不参与覆盖率统计。
-          grep -v '/examples/' coverage.out > coverage.core.out
+          # examples/ 是演示代码, cmd/ 是 CLI 入口, internal/ 是工具链支持代码,
+          # 三者都不属于"用户使用的核心库 API", 不参与覆盖率统计。
+          grep -v -E '/(examples|cmd|internal)/' coverage.out > coverage.core.out
           pct=$(go tool cover -func=coverage.core.out | awk '/^total:/ {print $3}' | sed 's/%//')
           echo "core total coverage: ${pct}% (threshold: ${threshold}%)"
           awk -v p="$pct" -v t="$threshold" 'BEGIN { if (p+0 < t+0) { exit 1 } }'
@@ -105,7 +106,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23.x"
+          go-version: "1.24.x"
           cache: true
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
