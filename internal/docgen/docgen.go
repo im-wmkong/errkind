@@ -16,10 +16,9 @@ import (
 
 // Entry 是文档中的单条错误码记录。
 type Entry struct {
-	Code    uint32 `json:"code"`
-	Name    string `json:"name"`
-	Message string `json:"message,omitempty"`
-	Source  string `json:"source"`
+	Code   uint32 `json:"code"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
 }
 
 // Build 把扫描得到的 Definition 转成按 code 升序排列的 Entry 列表。
@@ -27,10 +26,9 @@ func Build(defs []scan.Definition) []Entry {
 	out := make([]Entry, 0, len(defs))
 	for _, d := range defs {
 		out = append(out, Entry{
-			Code:    d.Code,
-			Name:    d.Name,
-			Message: d.Message,
-			Source:  d.Pos.String(),
+			Code:   d.Code,
+			Name:   d.Name,
+			Source: d.Pos.String(),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -50,15 +48,15 @@ func RenderMarkdown(w io.Writer, entries []Entry) error {
 	if _, err := fmt.Fprintln(w); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(w, "| Code | Name | Default Message | Source |"); err != nil {
+	if _, err := fmt.Fprintln(w, "| Code | Name | Source |"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(w, "|---:|---|---|---|"); err != nil {
+	if _, err := fmt.Fprintln(w, "|---:|---|---|"); err != nil {
 		return err
 	}
 	for _, e := range entries {
-		_, err := fmt.Fprintf(w, "| %d | `%s` | %s | `%s` |\n",
-			e.Code, e.Name, mdEscape(e.Message), e.Source)
+		_, err := fmt.Fprintf(w, "| %d | `%s` | `%s` |\n",
+			e.Code, mdEscape(e.Name), mdEscape(e.Source))
 		if err != nil {
 			return err
 		}
@@ -73,7 +71,7 @@ func RenderJSON(w io.Writer, entries []Entry) error {
 	return enc.Encode(entries)
 }
 
-// mdEscape 处理 message 中的 | 与换行, 避免破坏表格。
+// mdEscape prevents names and source paths from breaking table rows.
 func mdEscape(s string) string {
 	if s == "" {
 		return ""

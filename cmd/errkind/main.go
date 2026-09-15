@@ -60,6 +60,13 @@ func runDoc(args []string) {
 	for _, e := range scanErrs {
 		fmt.Fprintln(os.Stderr, "errkind doc:", e)
 	}
+	if len(scanErrs) > 0 {
+		os.Exit(1)
+	}
+	if *format != "md" && *format != "markdown" && *format != "json" {
+		fmt.Fprintf(os.Stderr, "errkind doc: unknown format %q (want md|json)\n", *format)
+		os.Exit(2)
+	}
 	entries := docgen.Build(defs)
 
 	w := os.Stdout

@@ -1,51 +1,60 @@
 package errkind
 
-import "errors"
-
-// 本文件提供从 error 链中"读"信息的 helper。
-// 全部基于 errors.As, 不引入新机制。
-
-// KindOf 从 err 链上提取第一个 errkind 错误的 Kind。
-//
-// 注意: 当 err 不是 errkind 错误时返回 nil。
-// 推荐使用 CodeOf / NameOf 这两个 (T, bool) 风格的 helper, 避免空指针解引用:
-//
-//	if c, ok := errkind.CodeOf(err); ok && c == UserNotFound.Code() { ... }
-//
-// 或者显式 nil 判:
-//
-//	if k := errkind.KindOf(err); k != nil && k == UserNotFound { ... }
+// KindOf returns the primary instance's bound identity, never an arbitrary sibling's.
 func KindOf(err error) *Kind {
-	var e *kerr
-	if errors.As(err, &e) {
-		return e.kind
+	if d := detailsOf(err); d != nil {
+		if k, ok := d.(interface{ Kind() *Kind }); ok {
+			return k.Kind()
+		}
 	}
 	return nil
 }
 
-// CodeOf 返回错误的业务 Code 与是否找到; 是 KindOf 的 nil-safe 版本。
+func detailsOf(err error) Details {
+	for n := 0; err != nil && n < 256; n++ {
+		if d, ok := err.(Details); ok {
+			return d
+		}
+		switch e := err.(type) {
+		case interface{ Unwrap() error }:
+			err = e.Unwrap()
+		case interface{ Unwrap() []error }:
+			var next error
+			for _, child := range e.Unwrap() {
+				if child == nil {
+					continue
+				}
+				if next != nil {
+					return nil
+				}
+				next = child
+			}
+			err = next
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
 func CodeOf(err error) (Code, bool) {
-	var e *kerr
-	if errors.As(err, &e) {
-		return e.kind.code, true
+	if d := detailsOf(err); d != nil {
+		return d.BusinessCode()
 	}
 	return 0, false
 }
 
-// NameOf 返回错误的 Kind name 与是否找到; 是 KindOf 的 nil-safe 版本。
 func NameOf(err error) (string, bool) {
-	var e *kerr
-	if errors.As(err, &e) {
-		return e.kind.name, true
+	if d := detailsOf(err); d != nil {
+		name := d.Name()
+		return name, name != ""
 	}
 	return "", false
 }
 
-// MessageOf 返回错误的 Message; 没有 errkind 错误时返回 err.Error()。
 func MessageOf(err error) string {
-	var e *kerr
-	if errors.As(err, &e) {
-		return e.message
+	if d := detailsOf(err); d != nil {
+		return d.Message()
 	}
 	if err == nil {
 		return ""
@@ -53,43 +62,62 @@ func MessageOf(err error) string {
 	return err.Error()
 }
 
-// AttrsOf 返回最外层 errkind 错误的 attrs 拷贝; 没有则返回 nil。
-//
-// 返回的是浅拷贝, 调用方可以安全修改, 不会影响原错误。
 func AttrsOf(err error) []Attr {
-	var e *kerr
-	if errors.As(err, &e) {
-		if len(e.attrs) == 0 {
-			return nil
-		}
-		out := make([]Attr, len(e.attrs))
-		copy(out, e.attrs)
-		return out
+	if d := detailsOf(err); d != nil {
+		return d.Attrs()
 	}
 	return nil
 }
 
-// AllAttrs 沿错误链收集所有 errkind 错误的 attrs (扁平合并)。
-//
-// 同名 key 以"最外层"为准 (符合"内层是细节, 外层是上下文增强"的直觉);
-// 99% 的日志场景需要这个扁平视图, 默认就给, 不让业务自己 Walk。
+// AllAttrs is a lossy, depth-first flat view; the first value for each key wins.
 func AllAttrs(err error) []Attr {
 	var out []Attr
 	seen := map[string]struct{}{}
-	for cur := err; cur != nil; {
+	walk(err, func(cur error) bool {
+		var attrs []Attr
 		if e, ok := cur.(*kerr); ok {
-			for _, a := range e.attrs {
-				if _, exists := seen[a.Key]; !exists {
-					seen[a.Key] = struct{}{}
-					out = append(out, a)
-				}
+			attrs = e.attrs
+		} else if d, ok := cur.(Details); ok {
+			attrs = d.Attrs()
+		}
+		for _, a := range attrs {
+			if _, exists := seen[a.Key]; !exists {
+				seen[a.Key] = struct{}{}
+				out = append(out, a)
 			}
 		}
-		u, ok := cur.(interface{ Unwrap() error })
-		if !ok {
-			break
-		}
-		cur = u.Unwrap()
-	}
+		return false
+	})
 	return out
+}
+
+func walk(err error, visit func(error) bool) bool {
+	remaining := 256
+	var walkNode func(error) bool
+	walkNode = func(cur error) bool {
+		for cur != nil && remaining > 0 {
+			remaining--
+			if visit(cur) {
+				return true
+			}
+			switch e := cur.(type) {
+			case interface{ Unwrap() error }:
+				cur = e.Unwrap()
+			case interface{ Unwrap() []error }:
+				for _, child := range e.Unwrap() {
+					if remaining == 0 {
+						break
+					}
+					if walkNode(child) {
+						return true
+					}
+				}
+				return false
+			default:
+				return false
+			}
+		}
+		return false
+	}
+	return walkNode(err)
 }

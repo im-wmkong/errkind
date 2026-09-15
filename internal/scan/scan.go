@@ -2,7 +2,7 @@
 // 用于 errkindlint (冲突检测) 和 errkind doc (文档生成) 共享同一份解析逻辑。
 //
 // 限制:
-//   - 仅识别字面量参数 (整型 code 与字符串 name); 变量 / 常量引用不识别。
+//   - 仅识别字面量参数 (整型 code 与字符串 name); 变量 / 常量引用报告诊断。
 //   - 仅识别包级 errkind.Define 调用 (含 import alias); 不识别 r.Define (Registry 实例方法)。
 //   - 跳过 _test.go 与 vendor / testdata 目录。
 package scan
@@ -22,36 +22,60 @@ import (
 // ModulePath 是 errkind 主模块的导入路径; 扫描器只在导入了它的文件里查找 Define。
 const ModulePath = "github.com/im-wmkong/errkind"
 
-// Definition 描述一次 Define(code, name, ...) 调用的静态信息。
+// Definition 描述一次 Define(code, name) 调用的静态信息。
 type Definition struct {
-	Code    uint32
-	Name    string
-	Message string // DefaultMessage("...") 的字面量, 解析不到时为空
-	Pos     token.Position
+	Code uint32
+	Name string
+	Pos  token.Position
 }
 
 // ScanDirs 递归扫描多个目录, 返回找到的 Define 调用与扫描期间的非致命错误。
 //
 // 解析失败 / 读取失败的单个文件不会中断整体扫描, 错误被收集到第二个返回值。
-func ScanDirs(dirs []string) ([]Definition, []error) {
+func ScanDirs(dirs []string, excludes ...string) ([]Definition, []error) {
 	var defs []Definition
 	var errs []error
+	for _, pattern := range excludes {
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			return nil, []error{fmt.Errorf("invalid exclude %q: %w", pattern, err)}
+		}
+	}
 	fset := token.NewFileSet()
+	seen := map[string]bool{}
 	for _, dir := range dirs {
-		ds, es := scanDir(fset, dir)
+		ds, es := scanDir(fset, dir, excludes, seen)
 		defs = append(defs, ds...)
 		errs = append(errs, es...)
 	}
 	return defs, errs
 }
 
-func scanDir(fset *token.FileSet, dir string) ([]Definition, []error) {
+func excluded(path string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if matched, _ := filepath.Match(pattern, path); matched || strings.Contains(path, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func scanDir(fset *token.FileSet, dir string, excludes []string, seen map[string]bool) ([]Definition, []error) {
 	var defs []Definition
 	var errs []error
 
 	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			errs = append(errs, err)
+			return nil
+		}
+		matchPath := path
+		if d.IsDir() {
+			matchPath += string(filepath.Separator)
+		}
+		if excluded(path, excludes) || excluded(matchPath, excludes) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
@@ -67,6 +91,15 @@ func scanDir(fset *token.FileSet, dir string) ([]Definition, []error) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
+		absolute, absErr := filepath.Abs(path)
+		if absErr != nil {
+			errs = append(errs, absErr)
+			return nil
+		}
+		if seen[absolute] {
+			return nil
+		}
+		seen[absolute] = true
 		ds, fe := scanFile(fset, path)
 		if fe != nil {
 			errs = append(errs, fe)
@@ -97,6 +130,7 @@ func scanFile(fset *token.FileSet, path string) ([]Definition, error) {
 	}
 
 	var defs []Definition
+	var analysisErr error
 	ast.Inspect(f, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -107,12 +141,15 @@ func scanFile(fset *token.FileSet, path string) ([]Definition, error) {
 		}
 		d, ok := parseDefineCall(fset, call)
 		if !ok {
+			if analysisErr == nil {
+				analysisErr = fmt.Errorf("%s: cannot analyze Define: expected exactly two literal arguments (code, name)", fset.Position(call.Pos()))
+			}
 			return true
 		}
 		defs = append(defs, d)
 		return true
 	})
-	return defs, nil
+	return defs, analysisErr
 }
 
 // findImportAlias 找出当前文件里 errkind 模块的本地名称。
@@ -149,7 +186,7 @@ func isErrkindCall(fn ast.Expr, alias, method string) bool {
 }
 
 func parseDefineCall(fset *token.FileSet, call *ast.CallExpr) (Definition, bool) {
-	if len(call.Args) < 2 {
+	if len(call.Args) != 2 {
 		return Definition{}, false
 	}
 	code, ok := parseUintLit(call.Args[0])
@@ -160,17 +197,10 @@ func parseDefineCall(fset *token.FileSet, call *ast.CallExpr) (Definition, bool)
 	if !ok {
 		return Definition{}, false
 	}
-	msg := ""
-	for _, arg := range call.Args[2:] {
-		if m, ok := parseDefaultMessage(arg); ok {
-			msg = m
-		}
-	}
 	return Definition{
-		Code:    code,
-		Name:    name,
-		Message: msg,
-		Pos:     fset.Position(call.Pos()),
+		Code: code,
+		Name: name,
+		Pos:  fset.Position(call.Pos()),
 	}, true
 }
 
@@ -196,23 +226,4 @@ func parseStringLit(e ast.Expr) (string, bool) {
 		return "", false
 	}
 	return s, true
-}
-
-// parseDefaultMessage 识别 errkind.DefaultMessage("...") / DefaultMessage("..."), 取出字面量。
-func parseDefaultMessage(arg ast.Expr) (string, bool) {
-	call, ok := arg.(*ast.CallExpr)
-	if !ok {
-		return "", false
-	}
-	var name string
-	switch fn := call.Fun.(type) {
-	case *ast.SelectorExpr:
-		name = fn.Sel.Name
-	case *ast.Ident:
-		name = fn.Name
-	}
-	if name != "DefaultMessage" || len(call.Args) != 1 {
-		return "", false
-	}
-	return parseStringLit(call.Args[0])
 }

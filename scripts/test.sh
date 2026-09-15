@@ -14,6 +14,7 @@
 #   - 兼容 macOS 自带的 bash 3.2 (无 mapfile / 不依赖 [[ -v ])。
 
 set -euo pipefail
+export GOWORK=off
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
@@ -60,7 +61,7 @@ for mod in "${mods[@]}"; do
     failed+=("$dir (vet)")
     ok=0
   fi
-  if [ "$ok" = "1" ] && ! (cd "$dir" && go build ./...); then
+  if [ "$ok" = "1" ] && ! (cd "$dir" && go build -o /dev/null ./...); then
     failed+=("$dir (build)")
     ok=0
   fi

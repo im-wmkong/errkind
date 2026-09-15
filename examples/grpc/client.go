@@ -2,60 +2,40 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 
-	grpcext "github.com/im-wmkong/errkind/ext/grpc"
-	grpcint "github.com/im-wmkong/errkind/integration/grpc"
-	grpcsdk "google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
+	"github.com/im-wmkong/errkind"
+	grpcerr "github.com/im-wmkong/errkind/grpc"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-// dialClient 用给定的 dialer 建立一条挂了 errkind 客户端拦截器的连接,
-// 返回 *grpc.ClientConn, 调用方负责 Close。
-func dialClient(dialer func(context.Context, string) (net.Conn, error)) (*grpcsdk.ClientConn, error) {
-	return grpcsdk.NewClient(
-		"passthrough:///bufnet",
-		grpcsdk.WithContextDialer(dialer),
-		grpcsdk.WithTransportCredentials(insecure.NewCredentials()),
-		grpcsdk.WithUnaryInterceptor(grpcint.UnaryClientInterceptor()),
-	)
+func dialClient(dialer func(context.Context, string) (net.Conn, error)) (*grpc.ClientConn, error) {
+	return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(dialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
 
-// callGet 发起一次 RPC 并把"客户端拿到错误后的标准分流"演示出来。
-func callGet(ctx context.Context, cc *grpcsdk.ClientConn, id int64) {
-	fmt.Printf("\n[id=%d]\n", id)
-	req := wrapperspb.Int64(id)
-	var resp wrapperspb.StringValue
-	err := cc.Invoke(ctx, methodName, req, &resp)
-	describeClientErr(err)
-}
-
-// describeClientErr 演示客户端拿到错误后, 如何用 grpcint / grpcext 取字段并按 reason 分支。
-func describeClientErr(err error) {
+func callGet(ctx context.Context, conn *grpc.ClientConn, id int64) {
+	var response wrapperspb.StringValue
+	err := conn.Invoke(ctx, methodName, wrapperspb.Int64(id), &response)
 	if err == nil {
-		fmt.Println("  ok")
+		fmt.Printf("id=%d: %s\n", id, response.GetValue())
 		return
 	}
-	fmt.Printf("  error    = %v\n", err)
-	if name, ok := grpcint.NameOf(err); ok {
-		fmt.Printf("  reason   = %s\n", name)
+	st, ok := status.FromError(err)
+	if !ok {
+		fmt.Printf("id=%d: local error: %v\n", id, err)
+		return
 	}
-	if c, ok := grpcint.CodeOf(err); ok {
-		fmt.Printf("  bizcode  = %d\n", c)
-	}
-	if g, ok := grpcext.CodeOf(err); ok {
-		fmt.Printf("  grpcCode = %s\n", codes.Code(g))
-	}
-	for _, kv := range grpcint.AttrsOf(err) {
-		fmt.Printf("  attr     = %s=%v\n", kv.Key, kv.Val)
-	}
+	remote := grpcerr.FromStatus(st, errkind.DefaultRegistry())
+	fmt.Printf("id=%d: %s, %s\n", id, st.Code(), errkind.MessageOf(remote))
 	switch {
-	case grpcint.IsReason(err, "user_not_found"):
-		fmt.Println("  branch   -> 提示用户去注册")
-	case grpcint.IsReason(err, "invalid_argument"):
-		fmt.Println("  branch   -> 校验失败, 表单回退")
+	case errors.Is(remote, UserNotFound):
+		fmt.Println("提示用户去注册")
+	case errors.Is(remote, InvalidArgument):
+		fmt.Println("提示用户检查参数")
 	}
 }

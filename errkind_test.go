@@ -2,604 +2,231 @@ package errkind_test
 
 import (
 	"encoding/json"
-	stderrors "errors"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/im-wmkong/errkind"
 )
 
-// 用独立 Registry, 避免不同测试间的 code/name 冲突。
-func newReg() *errkind.Registry { return errkind.NewRegistry() }
+var packageLevelKind = errkind.Define(900001, "pkg_level_define")
 
-// --- Identity / Instance --------------------------------------
-
-func TestKindIdentityVsInstance(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "identity")
-
-	e1 := K.New(errkind.Message("a"))
-	e2 := K.New(errkind.Message("b"))
-	if e1 == e2 {
-		t.Fatal("instances must differ")
+func TestIdentity(t *testing.T) {
+	r := errkind.NewRegistry()
+	a, b := r.Define(0, "a"), r.Define(2, "b")
+	other := errkind.NewRegistry().Define(0, "a")
+	cause := errors.New("root")
+	first, second := a.New("first"), a.New("second")
+	err := b.Wrap(fmt.Errorf("context: %w", errors.Join(a.Wrap(cause, "inner"), second)), "outer")
+	if first == second || !errors.Is(err, a) || !errors.Is(err, b) || !errors.Is(err, cause) || errors.Is(err, other) {
+		t.Fatal("identity or cause matching failed")
 	}
-	if !K.Is(e1) || !K.Is(e2) {
-		t.Fatal("Kind.Is should match own instances")
+	if errors.Is(a, first) || errors.Is(first, second) || errors.Is(nil, a) || a.Error() != "a(0)" {
+		t.Fatal("matching must be directional and pointer-based")
 	}
-	if errkind.KindOf(e1) != K {
-		t.Fatal("KindOf should return original Kind")
+	var d errkind.Details
+	if !errors.As(err, &d) || d.Name() != "b" || errkind.KindOf(err) != b {
+		t.Fatal("outer instance must win")
+	}
+	if a.Wrap(nil, "ignored") != nil {
+		t.Fatal("Wrap(nil) must return nil")
 	}
 }
 
-// --- Define duplicates ----------------------------------------
+func TestMessages(t *testing.T) {
+	k := errkind.NewRegistry().Define(1, "failed")
+	cause := errors.New("root")
+	opts := []errkind.Option{errkind.With("uid", 42)}
+	for _, msg := range []string{"", "查询用户失败", "literal %s", fmt.Sprintf("uid=%d", 42)} {
+		t.Run(msg, func(t *testing.T) {
+			for _, err := range []error{k.New(msg, opts...), k.Wrap(cause, msg, opts...)} {
+				if errkind.MessageOf(err) != msg || err.(errkind.Details).Message() != msg {
+					t.Fatalf("message changed: %v", err)
+				}
+				want := "failed(1)"
+				if msg != "" {
+					want += ": " + msg
+				}
+				if errors.Unwrap(err) != nil {
+					if !errors.Is(err, cause) {
+						t.Fatal("cause lost")
+					}
+					want += ": root"
+				}
+				if err.Error() != want || errkind.AttrsOf(err)[0].Val != 42 {
+					t.Fatalf("details: %v", err)
+				}
+			}
+		})
+	}
+}
 
-func TestDefineDuplicateCode(t *testing.T) {
-	r := newReg()
-	r.Define(1, "a")
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
+func TestPrimary(t *testing.T) {
+	r := errkind.NewRegistry()
+	a, b := r.Define(0, "a"), r.Define(2, "b")
+	leaf := a.New("internal", errkind.With("uid", 1))
+	for _, err := range []error{leaf, fmt.Errorf("lookup: %w", leaf), errors.Join(leaf)} {
+		if c, ok := errkind.CodeOf(err); !ok || c != 0 {
+			t.Fatalf("zero code lost: %v %v", c, ok)
 		}
-	}()
-	r.Define(1, "b")
-}
-
-func TestDefineDuplicateName(t *testing.T) {
-	r := newReg()
-	r.Define(1, "a")
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
+		if n, ok := errkind.NameOf(err); !ok || n != "a" || errkind.KindOf(err) != a || errkind.MessageOf(err) != "internal" || len(errkind.AttrsOf(err)) != 1 {
+			t.Fatal("primary details lost")
 		}
-	}()
-	r.Define(2, "a")
-}
-
-func TestDefineEmptyName(t *testing.T) {
-	r := newReg()
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
+	}
+	for _, err := range []error{nil, errors.New("plain"), a, errors.Join(leaf, b.New("")), fmt.Errorf("both: %w %w", leaf, b.New(""))} {
+		if _, ok := errkind.CodeOf(err); ok {
+			t.Fatalf("unexpected primary: %v", err)
 		}
-	}()
-	r.Define(1, "")
-}
-
-// --- Wrap nil -------------------------------------------------
-
-func TestWrapNil(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "x")
-	if got := K.Wrap(nil, errkind.Message("m")); got != nil {
-		t.Fatalf("Wrap(nil) must return nil, got %v", got)
+		if _, ok := errkind.NameOf(err); ok || errkind.KindOf(err) != nil || errkind.AttrsOf(err) != nil {
+			t.Fatalf("ambiguous or absent primary: %v", err)
+		}
+	}
+	if errkind.MessageOf(nil) != "" || errkind.MessageOf(errors.New("plain")) != "plain" || errkind.MessageOf(a.New("")) != "" {
+		t.Fatal("message fallback")
+	}
+	joined := errors.Join(leaf, b.New(""))
+	if errkind.MessageOf(joined) != joined.Error() || errkind.KindOf(b.Wrap(joined, "outer")) != b {
+		t.Fatal("join must need explicit classification")
 	}
 }
 
-// --- errors.Is / Kind.Is --------------------------------------
-
-func TestErrorsIsCause(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "x")
-	cause := stderrors.New("boom")
-	e := K.Wrap(cause)
-	if !stderrors.Is(e, cause) {
-		t.Fatal("errors.Is should find cause")
+func TestAttrs(t *testing.T) {
+	r := errkind.NewRegistry()
+	a, b := r.Define(1, "a"), r.Define(2, "b")
+	value := map[string]int{"n": 1}
+	err := a.New(fmt.Sprintf("uid=%d", 2), errkind.With("uid", 1), errkind.With("map", value), errkind.With("uid", 2))
+	attrs := errkind.AttrsOf(err)
+	if len(attrs) != 2 || attrs[0].Key != "uid" || attrs[0].Val != 2 || errkind.MessageOf(err) != "uid=2" {
+		t.Fatal("attribute order/override or message")
 	}
-	if !K.Is(e) {
-		t.Fatal("Kind.Is failed")
+	attrs[0].Val = 99
+	d := err.(errkind.Details)
+	copy := d.Attrs()
+	copy[0].Val = 100
+	if d.Attrs()[0].Val != 2 {
+		t.Fatal("slice alias")
 	}
-}
-
-func TestKindIsThroughChain(t *testing.T) {
-	r := newReg()
-	A := r.Define(1, "a")
-	B := r.Define(2, "b")
-	e := B.Wrap(A.New())
-	if !A.Is(e) || !B.Is(e) {
-		t.Fatal("both Kind.Is should match through chain")
+	value["n"] = 3
+	if d.Attrs()[1].Val.(map[string]int)["n"] != 3 {
+		t.Fatal("values should not be deep-copied")
 	}
-}
-
-// --- KindOf / MessageOf / AttrsOf / AllAttrs ------------------
-
-func TestKindOf(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "x")
-	e := K.New()
-	if got := errkind.KindOf(e); got != K {
-		t.Fatal("KindOf wrong")
+	tree := b.Wrap(errors.Join(err, a.New("", errkind.With("right", true), errkind.With("uid", 4))), "", errkind.With("uid", 5))
+	all := errkind.AllAttrs(fmt.Errorf("context: %w", tree))
+	if len(all) != 3 || all[0].Val != 5 || all[2].Key != "right" {
+		t.Fatalf("flat view: %v", all)
 	}
-	if got := errkind.KindOf(stderrors.New("plain")); got != nil {
-		t.Fatal("KindOf on plain error should be nil")
+	if errkind.AllAttrs(nil) != nil || errkind.AllAttrs(errors.New("plain")) != nil || errkind.AttrsOf(a.New("")) != nil {
+		t.Fatal("empty attrs")
 	}
 }
 
-func TestCodeOfAndNameOf(t *testing.T) {
-	r := newReg()
-	K := r.Define(42, "named")
-	e := K.New()
+func TestRegistry(t *testing.T) {
+	for _, duplicate := range []struct {
+		code errkind.Code
+		name string
+	}{{1, "b"}, {2, "a"}, {3, ""}} {
+		t.Run(fmt.Sprint(duplicate), func(t *testing.T) {
+			r := errkind.NewRegistry()
+			r.Define(1, "a")
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected panic")
+				}
+			}()
+			r.Define(duplicate.code, duplicate.name)
+		})
+	}
+	r := errkind.NewRegistry()
+	k := r.Define(7, "lookup")
+	if k.Code() != 7 || k.Name() != "lookup" || r.LookupCode(7) != k || r.LookupName("lookup") != k || r.LookupCode(8) != nil || r.LookupName("missing") != nil {
+		t.Fatal("lookup")
+	}
+	list := r.Kinds()
+	list[0] = nil
+	if r.Kinds()[0] != k {
+		t.Fatal("Kinds alias")
+	}
+	if errkind.DefaultRegistry().LookupCode(900001) != packageLevelKind || errkind.LookupCode(900001) != packageLevelKind || errkind.LookupName("pkg_level_define") != packageLevelKind || len(errkind.Kinds()) == 0 {
+		t.Fatal("default registry")
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r.Define(errkind.Code(i+100), fmt.Sprint(i))
+			_ = r.Kinds()
+			_ = r.LookupCode(7)
+		}(i)
+	}
+	wg.Wait()
+}
 
-	if c, ok := errkind.CodeOf(e); !ok || c != 42 {
-		t.Fatalf("CodeOf wrong: %v %v", c, ok)
-	}
-	if n, ok := errkind.NameOf(e); !ok || n != "named" {
-		t.Fatalf("NameOf wrong: %v %v", n, ok)
-	}
+type tracer struct{ frames []errkind.Frame }
 
-	if _, ok := errkind.CodeOf(stderrors.New("plain")); ok {
-		t.Fatal("CodeOf on plain error should be false")
+func (t tracer) Error() string               { return "traced" }
+func (t tracer) StackTrace() []errkind.Frame { return t.frames }
+
+func TestStacks(t *testing.T) {
+	plain := errkind.NewRegistry().Define(1, "plain")
+	traced := errkind.NewRegistry(errkind.CaptureStack()).Define(1, "traced")
+	if len(errkind.StackOf(plain.New(""))) != 0 || len(errkind.StackOf(nil)) != 0 {
+		t.Fatal("default stacks")
 	}
-	if _, ok := errkind.NameOf(nil); ok {
-		t.Fatal("NameOf(nil) should be false")
+	inner := traced.New("")
+	frames := errkind.StackOf(inner)
+	if len(frames) == 0 || !strings.Contains(frames[0].Function, "TestStacks") {
+		t.Fatalf("callsite: %v", frames)
+	}
+	for _, cause := range []error{inner, errors.Join(plain.New(""), inner), tracer{frames: []errkind.Frame{{Function: "fake", File: "f.go", Line: 1}}}} {
+		wrapped := traced.Wrap(cause, "")
+		if len(wrapped.(errkind.Tracer).StackTrace()) != 0 || len(errkind.StackOf(wrapped)) == 0 {
+			t.Fatal("stack reuse")
+		}
+	}
+	for _, cause := range []error{plain.New(""), tracer{}} {
+		if len(traced.Wrap(cause, "").(errkind.Tracer).StackTrace()) == 0 {
+			t.Fatal("empty tracer must not suppress capture")
+		}
+	}
+	frames[0].File = "changed"
+	if errkind.StackOf(inner)[0].File == "changed" {
+		t.Fatal("stack slice alias")
+	}
+	if (errkind.Frame{Function: "f", File: "f.go", Line: 3}).String() != "f\n\tf.go:3" {
+		t.Fatal("frame format")
 	}
 }
 
-func TestAttrsOfReturnsCopy(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "x")
-	e := K.New(errkind.With("uid", 1))
-
-	got := errkind.AttrsOf(e)
-	got[0].Val = 999 // 改外部副本
-
-	got2 := errkind.AttrsOf(e)
-	if got2[0].Val != 1 {
-		t.Fatalf("AttrsOf must return a copy, got %v", got2[0].Val)
-	}
-}
-
-func TestMessageOfFallback(t *testing.T) {
-	if got := errkind.MessageOf(stderrors.New("raw")); got != "raw" {
-		t.Fatalf("fallback to err.Error(), got %q", got)
-	}
-	if got := errkind.MessageOf(nil); got != "" {
-		t.Fatal("nil should be empty")
-	}
-}
-
-func TestAttrsOrderAndOverride(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "x")
-	e := K.New(
-		errkind.With("uid", 1),
-		errkind.With("trace", "x"),
-		errkind.With("uid", 2),
-	)
-	attrs := errkind.AttrsOf(e)
-	if len(attrs) != 2 {
-		t.Fatalf("len wrong: %v", attrs)
-	}
-	if attrs[0].Key != "uid" || attrs[0].Val != 2 {
-		t.Fatalf("first wrong: %v", attrs[0])
-	}
-	if attrs[1].Key != "trace" {
-		t.Fatalf("second wrong: %v", attrs[1])
-	}
-}
-
-func TestAllAttrsFlatten(t *testing.T) {
-	r := newReg()
-	A := r.Define(1, "a")
-	B := r.Define(2, "b")
-	e := B.Wrap(A.New(errkind.With("inner", 1), errkind.With("shared", "from_a")),
-		errkind.With("outer", 2),
-		errkind.With("shared", "from_b"))
-	all := errkind.AllAttrs(e)
-
-	got := map[string]any{}
-	for _, a := range all {
-		got[a.Key] = a.Val
-	}
-	if got["inner"] != 1 || got["outer"] != 2 {
-		t.Fatalf("flatten wrong: %+v", got)
-	}
-	if got["shared"] != "from_b" {
-		t.Fatalf("outer should win: %v", got["shared"])
-	}
-}
-
-// --- DefaultMessage --------------------------------------------
-
-func TestDefaultMessage(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "x", errkind.DefaultMessage("默认"))
-	if errkind.MessageOf(K.New()) != "默认" {
-		t.Fatal("default message")
-	}
-	if errkind.MessageOf(K.New(errkind.Message("覆盖"))) != "覆盖" {
-		t.Fatal("override")
-	}
-}
-
-// --- Stack (进程级开关) ----------------------------------------
-
-func TestStackDefaultOff(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "x")
-	e := K.New()
-	st := e.(errkind.Tracer).StackTrace()
-	if len(st) != 0 {
-		t.Fatal("default should not capture stack")
-	}
-}
-
-func TestStackOn(t *testing.T) {
-	errkind.SetCaptureStack(true)
-	t.Cleanup(func() { errkind.SetCaptureStack(false) })
-
-	r := newReg()
-	K := r.Define(1, "x")
-	e := K.New()
-	st := e.(errkind.Tracer).StackTrace()
-	if len(st) == 0 {
-		t.Fatal("expected frames")
-	}
-	if !strings.Contains(st[0].Function, "TestStackOn") &&
-		!strings.Contains(st[1].Function, "TestStackOn") {
-		t.Fatalf("expected TestStackOn near top, got %v", st)
-	}
-}
-
-// --- Registry helpers -----------------------------------------
-
-func TestLookup(t *testing.T) {
-	r := newReg()
-	K := r.Define(42, "lookup")
-	if r.LookupCode(42) != K {
-		t.Fatal("LookupCode")
-	}
-	if r.LookupName("lookup") != K {
-		t.Fatal("LookupName")
-	}
-	if r.LookupCode(999) != nil {
-		t.Fatal("missing code should be nil")
-	}
-	if len(r.Kinds()) != 1 {
-		t.Fatal("Kinds count wrong")
-	}
-}
-
-// --- Error 文本 -----------------------------------------------
-
-func TestErrorString(t *testing.T) {
-	r := newReg()
-	K := r.Define(7, "boom")
-	e := K.Wrap(stderrors.New("root"), errkind.Message("ctx"))
-	got := e.Error()
-	for _, w := range []string{"boom", "(7)", "ctx", "root"} {
-		if !strings.Contains(got, w) {
-			t.Fatalf("missing %q in %q", w, got)
+func TestFormattingAndNoImplicitJSON(t *testing.T) {
+	for _, r := range []*errkind.Registry{errkind.NewRegistry(), errkind.NewRegistry(errkind.CaptureStack())} {
+		k := r.Define(7, "boom")
+		err := k.Wrap(errors.New("root"), "context")
+		if err.Error() != "boom(7): context: root" || fmt.Sprintf("%v", err) != err.Error() || fmt.Sprintf("%s", err) != err.Error() || fmt.Sprintf("%q", err) != fmt.Sprintf("%q", err.Error()) {
+			t.Fatal("format")
+		}
+		if len(errkind.StackOf(err)) > 0 && !strings.Contains(fmt.Sprintf("%+v", err), ".go:") {
+			t.Fatal("formatted stack")
+		}
+		if _, ok := err.(json.Marshaler); ok {
+			t.Fatal("implicit diagnostic JSON must not be exported")
+		}
+		raw, e := json.Marshal(err)
+		if e != nil || string(raw) != "{}" {
+			t.Fatalf("JSON: %s %v", raw, e)
 		}
 	}
 }
 
-// --- Format (%v / %+v / %q) -----------------------------------
+type cyclic struct{}
 
-func TestFormatV(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "fmt_v")
-	e := K.New(errkind.Message("m"))
-	if got := fmt.Sprintf("%v", e); got != e.Error() {
-		t.Fatalf("%%v should equal Error(), got %q", got)
-	}
-	if got := fmt.Sprintf("%s", e); got != e.Error() {
-		t.Fatalf("%%s should equal Error(), got %q", got)
-	}
-}
-
-func TestFormatQ(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "fmt_q")
-	e := K.New(errkind.Message("m"))
-	got := fmt.Sprintf("%q", e)
-	if !strings.HasPrefix(got, `"`) || !strings.HasSuffix(got, `"`) {
-		t.Fatalf("%%q should be quoted, got %s", got)
-	}
-}
-
-func TestFormatPlusVWithStack(t *testing.T) {
-	errkind.SetCaptureStack(true)
-	t.Cleanup(func() { errkind.SetCaptureStack(false) })
-
-	r := newReg()
-	K := r.Define(1, "fmt_plus")
-	e := K.New(errkind.Message("m"))
-
-	got := fmt.Sprintf("%+v", e)
-	if !strings.Contains(got, "fmt_plus") {
-		t.Fatalf("missing kind name in %%+v: %q", got)
-	}
-	// 必须出现栈帧 (file:line 形式)
-	if !strings.Contains(got, ".go:") {
-		t.Fatalf("expected stack frames in %%+v, got %q", got)
-	}
-}
-
-func TestFormatPlusVWithoutStack(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "fmt_plus_nostack")
-	e := K.New(errkind.Message("m"))
-	got := fmt.Sprintf("%+v", e)
-	// 没栈时 %+v 等于 Error()
-	if got != e.Error() {
-		t.Fatalf("without stack, %%+v should equal Error(); got %q", got)
-	}
-}
-
-// --- JSON ----------------------------------------------------
-
-func TestMarshalJSON(t *testing.T) {
-	r := newReg()
-	K := r.Define(10001, "json_basic", errkind.DefaultMessage("默认"))
-	e := K.Wrap(stderrors.New("root"),
-		errkind.With("uid", 42),
-		errkind.With("name", "alice"),
-	)
-
-	raw, err := json.Marshal(e)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-
-	// 验证字段
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("Unmarshal: %v\n%s", err, raw)
-	}
-	if int(m["code"].(float64)) != 10001 {
-		t.Fatalf("code wrong: %v", m["code"])
-	}
-	if m["name"] != "json_basic" {
-		t.Fatalf("name wrong: %v", m["name"])
-	}
-	if m["message"] != "默认" {
-		t.Fatalf("message wrong: %v", m["message"])
-	}
-	if m["cause"] != "root" {
-		t.Fatalf("cause wrong: %v", m["cause"])
-	}
-	attrs := m["attrs"].(map[string]any)
-	if int(attrs["uid"].(float64)) != 42 || attrs["name"] != "alice" {
-		t.Fatalf("attrs wrong: %v", attrs)
-	}
-
-	// attrs 顺序: uid 先于 name
-	s := string(raw)
-	if strings.Index(s, `"uid"`) > strings.Index(s, `"name":"alice"`) {
-		t.Fatalf("attrs order broken: %s", s)
-	}
-}
-
-func TestMarshalJSONNoCauseNoMessageNoAttrs(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "json_minimal")
-	raw, err := json.Marshal(K.New())
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(raw)
-	want := `{"code":1,"name":"json_minimal"}`
-	if got != want {
-		t.Fatalf("minimal JSON wrong:\nwant %s\n got %s", want, got)
-	}
-}
-
-func TestMarshalJSONNestedErrkind(t *testing.T) {
-	r := newReg()
-	A := r.Define(1, "json_inner")
-	B := r.Define(2, "json_outer")
-	e := B.Wrap(A.New(errkind.With("a", 1)), errkind.With("b", 2))
-
-	raw, err := json.Marshal(e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(raw)
-	if !strings.Contains(s, `"name":"json_outer"`) {
-		t.Fatalf("missing outer: %s", s)
-	}
-	if !strings.Contains(s, `"name":"json_inner"`) {
-		t.Fatalf("inner cause should be expanded: %s", s)
-	}
-}
-
-func TestMarshalJSONUnserializableValue(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "json_bad_attr")
-
-	// chan 不可被 json.Marshal, 应当降级为字符串而不是整条失败
-	bad := make(chan int)
-	e := K.New(errkind.With("ch", bad))
-
-	raw, err := json.Marshal(e)
-	if err != nil {
-		t.Fatalf("should not fail, got %v", err)
-	}
-	if !strings.Contains(string(raw), `"ch":`) {
-		t.Fatalf("missing ch attr: %s", raw)
-	}
-}
-
-// 自定义 json.Marshaler, 用来覆盖 (*kerr).MarshalJSON 中
-// "cause 实现 json.Marshaler 但不是 *kerr" 的分支。
-type jsonCause struct{ msg string }
-
-func (c *jsonCause) Error() string                { return c.msg }
-func (c *jsonCause) MarshalJSON() ([]byte, error) { return []byte(`{"x":` + jsonQuote(c.msg) + `}`), nil }
-func jsonQuote(s string) string                   { return `"` + s + `"` }
-
-func TestMarshalJSONCauseImplementsMarshaler(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "json_cause_marshaler")
-	e := K.Wrap(&jsonCause{msg: "ext"})
-
-	raw, err := json.Marshal(e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `"cause":{"x":"ext"}`) {
-		t.Fatalf("cause should be expanded JSON, got %s", raw)
-	}
-}
-
-// --- Kind 三个 trivial accessor + Messagef ---------------------
-
-func TestKindAccessors(t *testing.T) {
-	r := newReg()
-	K := r.Define(7, "accessors", errkind.DefaultMessage("默认"))
-	if K.Code() != 7 {
-		t.Fatal("Code")
-	}
-	if K.Name() != "accessors" {
-		t.Fatal("Name")
-	}
-	if K.DefaultMessage() != "默认" {
-		t.Fatal("DefaultMessage")
-	}
-}
-
-func TestMessagef(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "msgf")
-	e := K.New(errkind.Messagef("uid=%d age=%d", 42, 18))
-	if errkind.MessageOf(e) != "uid=42 age=18" {
-		t.Fatalf("Messagef wrong: %q", errkind.MessageOf(e))
-	}
-}
-
-// --- *kerr 的 trivial accessor 通过类型断言访问 ---------------
-
-// 用 errors.As 提取出来后调用 Kind/Message/Attrs 也应工作。
-type kerrView interface {
-	Kind() *errkind.Kind
-	Message() string
-	Attrs() []errkind.Attr
-}
-
-func TestKerrViewAccessors(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "kerr_view")
-	e := K.New(errkind.Message("m"), errkind.With("uid", 1))
-
-	v, ok := e.(kerrView)
-	if !ok {
-		t.Fatal("kerr should expose Kind/Message/Attrs")
-	}
-	if v.Kind() != K {
-		t.Fatal("Kind()")
-	}
-	if v.Message() != "m" {
-		t.Fatal("Message()")
-	}
-	if len(v.Attrs()) != 1 || v.Attrs()[0].Key != "uid" {
-		t.Fatalf("Attrs(): %v", v.Attrs())
-	}
-}
-
-// --- AttrsOf 空 attr / 非 errkind 错误 -------------------------
-
-func TestAttrsOfEmptyAndPlain(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "attrs_empty")
-	if got := errkind.AttrsOf(K.New()); got != nil {
-		t.Fatalf("no attrs should return nil, got %v", got)
-	}
-	if got := errkind.AttrsOf(stderrors.New("plain")); got != nil {
-		t.Fatalf("plain error should return nil, got %v", got)
-	}
-}
-
-// --- AllAttrs 穿过非 errkind 节点 ------------------------------
-
-func TestAllAttrsThroughNonErrkindWrap(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "allattrs_chain")
-	inner := K.New(errkind.With("a", 1))
-	// 用标准 fmt.Errorf 包一层非 errkind, 验证 AllAttrs 能穿过
-	mid := fmt.Errorf("mid: %w", inner)
-	if got := errkind.AllAttrs(mid); len(got) != 1 || got[0].Key != "a" {
-		t.Fatalf("should walk through non-errkind nodes, got %v", got)
-	}
-	// 错误链终止时也要正常退出
-	if got := errkind.AllAttrs(stderrors.New("plain")); got != nil {
-		t.Fatalf("plain should be nil, got %v", got)
-	}
-	if got := errkind.AllAttrs(nil); got != nil {
-		t.Fatalf("nil should be nil, got %v", got)
-	}
-}
-
-// --- Kind.Is 在非 errkind 链上正确返回 false -------------------
-
-func TestKindIsOnNonErrkind(t *testing.T) {
-	r := newReg()
-	K := r.Define(1, "is_negative")
-	if K.Is(stderrors.New("plain")) {
-		t.Fatal("plain error should not match")
-	}
-	if K.Is(nil) {
-		t.Fatal("nil should not match")
-	}
-	// 一条链上不含 K 的实例
-	other := r.Define(2, "is_other")
-	e := other.New()
-	if K.Is(e) {
-		t.Fatal("different Kind should not match")
-	}
-}
-
-// --- 包级默认 Registry 也走一遍 ------------------------------
-
-func TestPackageLevelRegistry(t *testing.T) {
-	// 用一个不太可能冲突的 code 段
-	K := errkind.Define(900001, "pkg_level_define")
-	if got := errkind.LookupCode(900001); got != K {
-		t.Fatal("LookupCode")
-	}
-	if got := errkind.LookupName("pkg_level_define"); got != K {
-		t.Fatal("LookupName")
-	}
-	all := errkind.Kinds()
-	found := false
-	for _, k := range all {
-		if k == K {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("Kinds() should include defined kind")
-	}
-}
-
-// --- hasStack: Wrap 一个已抓栈错误时不重复抓 ------------------
-
-// fakeTracer 让 hasStack 找到 Tracer; cause 链里出现它时, 新 Wrap 不应再抓。
-type fakeTracer struct{ msg string }
-
-func (f *fakeTracer) Error() string             { return f.msg }
-func (f *fakeTracer) StackTrace() []errkind.Frame { return []errkind.Frame{{Function: "fake", File: "f.go", Line: 1}} }
-
-func TestHasStackPreventsRecapture(t *testing.T) {
-	errkind.SetCaptureStack(true)
-	t.Cleanup(func() { errkind.SetCaptureStack(false) })
-
-	r := newReg()
-	K := r.Define(1, "has_stack_skip")
-	e := K.Wrap(&fakeTracer{msg: "boom"}).(errkind.Tracer)
-
-	// 新 *kerr 因为 cause 已实现 Tracer, 自身不抓栈
-	if len(e.StackTrace()) != 0 {
-		t.Fatalf("should not capture again, got %d frames", len(e.StackTrace()))
-	}
-}
-
-// --- Frame.String 格式 ---------------------------------------
-
-func TestFrameString(t *testing.T) {
-	f := errkind.Frame{Function: "pkg.Func", File: "/x/y.go", Line: 42}
-	want := "pkg.Func\n\t/x/y.go:42"
-	if f.String() != want {
-		t.Fatalf("want %q got %q", want, f.String())
+func (*cyclic) Error() string   { return "cycle" }
+func (c *cyclic) Unwrap() error { return c }
+func TestTraversalBound(t *testing.T) {
+	c := &cyclic{}
+	if errkind.KindOf(c) != nil || errkind.AllAttrs(c) != nil || errkind.StackOf(c) != nil {
+		t.Fatal("cycle")
 	}
 }

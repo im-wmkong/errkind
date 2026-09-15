@@ -1,78 +1,69 @@
-// 演示 errkind 在 net/http 服务里如何统一渲染错误响应。
-//
-//	go run ./examples/http
-//	curl -i http://127.0.0.1:8080/user?id=42        # 200
-//	curl -i http://127.0.0.1:8080/user?id=0         # 400
-//	curl -i http://127.0.0.1:8080/user?id=999       # 404
-//
-// 关键点:
-//   - 业务层只产 errkind 错误 + ext/http 装饰, 不直接碰 ResponseWriter。
-//   - httpext.Render 是协议出口, 决定 status + body 形状, 只暴露 code/name/message。
-//   - 服务端日志保留全部信息 (含 cause/attrs), 由 slogext 处理。
 package main
 
 import (
-	stderrors "errors"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/im-wmkong/errkind"
-	httpext "github.com/im-wmkong/errkind/ext/http"
-	slogext "github.com/im-wmkong/errkind/ext/slog"
+	httperr "github.com/im-wmkong/errkind/http"
+	slogerr "github.com/im-wmkong/errkind/slog"
 )
 
 var (
-	UserNotFound = errkind.Define(10001, "user_not_found",
-		errkind.DefaultMessage("用户不存在"),
-	)
-	InvalidArgument = errkind.Define(10002, "invalid_argument",
-		errkind.DefaultMessage("参数非法"),
-	)
-	Internal = errkind.Define(10500, "internal",
-		errkind.DefaultMessage("内部错误"),
-	)
+	UserNotFound    = errkind.Define(10001, "user_not_found")
+	InvalidArgument = errkind.Define(10002, "invalid_argument")
+	Internal        = errkind.Define(10500, "internal")
 )
 
-var errNoRows = stderrors.New("sql: no rows in result set")
-
-func fakeDB(id int64) error {
-	if id == 999 {
-		return errNoRows
-	}
-	return nil
-}
+var errNoRows = errors.New("sql: no rows in result set")
 
 func getUser(id int64) error {
-	if id <= 0 {
-		return httpext.Status(http.StatusBadRequest)(
-			InvalidArgument.New(errkind.With("id", id)),
-		)
+	switch {
+	case id <= 0:
+		return InvalidArgument.New("id must be positive", errkind.With("id", id))
+	case id == 999:
+		return UserNotFound.Wrap(errNoRows, "lookup user", errkind.With("uid", id))
+	case id == 500:
+		return Internal.Wrap(errors.New("database connection failed"), "lookup user")
+	default:
+		return nil
 	}
-	if err := fakeDB(id); err != nil {
-		if stderrors.Is(err, errNoRows) {
-			return httpext.Status(http.StatusNotFound)(
-				UserNotFound.Wrap(err, errkind.With("uid", id)),
-			)
-		}
-		return httpext.Status(http.StatusInternalServerError)(
-			Internal.Wrap(err),
-		)
-	}
-	return nil
 }
 
 func handleUser(logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
-		if err := getUser(id); err != nil {
-			logger.Error("request failed", slogext.Err(err)) // 服务端: 全量
-			httpext.Render(w, err)                            // 客户端: 安全字段
+		id, parseErr := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+		var err error
+		if parseErr != nil {
+			err = InvalidArgument.Wrap(parseErr, "parse user id")
+		} else {
+			err = getUser(id)
+		}
+		if err != nil {
+			code := http.StatusInternalServerError
+			var opts []httperr.Option
+			switch errkind.KindOf(err) {
+			case InvalidArgument:
+				code = http.StatusBadRequest
+				opts = []httperr.Option{httperr.Status(code), httperr.Message("id 必须是正整数"), httperr.Identity()}
+			case UserNotFound:
+				code = http.StatusNotFound
+				opts = []httperr.Option{httperr.Status(code), httperr.Message("用户不存在"), httperr.Identity()}
+			}
+			logger.Error("request failed", slogerr.Err(err), slog.Int("http_status", code))
+			if writeErr := httperr.Write(w, err, opts...); writeErr != nil {
+				logger.Error("response write failed", slogerr.Err(writeErr))
+			}
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"id":` + strconv.FormatInt(id, 10) + `,"name":"alice"}`))
+		if _, err := w.Write([]byte(`{"id":` + strconv.FormatInt(id, 10) + `,"name":"alice"}`)); err != nil {
+			logger.Error("response write failed", slogerr.Err(err))
+		}
 	}
 }
 
@@ -80,11 +71,10 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	mux := http.NewServeMux()
 	mux.Handle("/user", handleUser(logger))
-
-	addr := ":8080"
-	logger.Info("listening", slog.String("addr", addr))
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		logger.Error("server exited", slogext.Err(err))
+	server := &http.Server{Addr: "127.0.0.1:8080", Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	logger.Info("listening", slog.String("addr", server.Addr))
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("server exited", slogerr.Err(err))
 		os.Exit(1)
 	}
 }

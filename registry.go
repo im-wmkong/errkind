@@ -10,29 +10,39 @@ import (
 // 通常使用包级 Define / Kinds / LookupCode / LookupName 即可;
 // 测试或多租户场景可以 NewRegistry() 创建独立注册中心。
 type Registry struct {
-	mu     sync.RWMutex
-	byCode map[Code]*Kind
-	byName map[string]*Kind
-	all    []*Kind
+	mu           sync.RWMutex
+	byCode       map[Code]*Kind
+	byName       map[string]*Kind
+	all          []*Kind
+	captureStack bool
 }
 
-// NewRegistry 创建一个独立的注册中心。
-func NewRegistry() *Registry {
+type registryConfig struct{ captureStack bool }
+
+type RegistryOption func(*registryConfig)
+
+func CaptureStack() RegistryOption {
+	return func(c *registryConfig) { c.captureStack = true }
+}
+
+func NewRegistry(opts ...RegistryOption) *Registry {
+	var config registryConfig
+	for _, option := range opts {
+		option(&config)
+	}
 	return &Registry{
-		byCode: map[Code]*Kind{},
-		byName: map[string]*Kind{},
+		byCode:       map[Code]*Kind{},
+		byName:       map[string]*Kind{},
+		captureStack: config.captureStack,
 	}
 }
 
 // Define 注册并返回一个新的 Kind; 重复 code/name 立即 panic。
-func (r *Registry) Define(code Code, name string, opts ...KindOption) *Kind {
+func (r *Registry) Define(code Code, name string) *Kind {
 	if name == "" {
 		panic("errkind: Define name must not be empty")
 	}
-	k := &Kind{code: code, name: name}
-	for _, o := range opts {
-		o(k)
-	}
+	k := &Kind{code: code, name: name, registry: r}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -73,20 +83,12 @@ func (r *Registry) LookupName(n string) *Kind {
 	return r.byName[n]
 }
 
-// KindOption 用于 Define 时配置 Kind 的默认行为。
-type KindOption func(*Kind)
-
-// DefaultMessage 给 Kind 设置默认消息, New / Wrap 未传 Message 时回退。
-func DefaultMessage(msg string) KindOption {
-	return func(k *Kind) { k.defaultMessage = msg }
-}
-
-// 包级默认 Registry。
 var defaultRegistry = NewRegistry()
 
-// Define 在默认注册中心注册一个 Kind。
-func Define(code Code, name string, opts ...KindOption) *Kind {
-	return defaultRegistry.Define(code, name, opts...)
+func DefaultRegistry() *Registry { return defaultRegistry }
+
+func Define(code Code, name string) *Kind {
+	return defaultRegistry.Define(code, name)
 }
 
 // Kinds 返回默认注册中心的所有 Kind。

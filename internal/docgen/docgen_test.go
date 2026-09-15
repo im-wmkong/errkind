@@ -11,8 +11,8 @@ import (
 
 func sample() []scan.Definition {
 	return []scan.Definition{
-		{Code: 20002, Name: "order_invalid", Message: "invalid", Pos: token.Position{Filename: "order.go", Line: 8, Column: 1}},
-		{Code: 10001, Name: "user_not_found", Message: "not found", Pos: token.Position{Filename: "user.go", Line: 12, Column: 1}},
+		{Code: 20002, Name: "order_invalid", Pos: token.Position{Filename: "order.go", Line: 8, Column: 1}},
+		{Code: 10001, Name: "user_not_found", Pos: token.Position{Filename: "user.go", Line: 12, Column: 1}},
 	}
 }
 
@@ -31,8 +31,8 @@ func TestRenderMarkdown(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"# Error Codes",
-		"| 10001 | `user_not_found` | not found |",
-		"| 20002 | `order_invalid` | invalid |",
+		"| 10001 | `user_not_found` | `user.go:12:1` |",
+		"| 20002 | `order_invalid` | `order.go:8:1` |",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)

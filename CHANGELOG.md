@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### v0.2.0 候选变更（尚未发布）
+
+- **BREAKING**: 全仓最低 Go 版本统一为 1.25.0，CI 矩阵更新为 Go 1.25/1.26；gRPC 升至 1.82.2，修复 GO-2026-6061，并更新受影响的 x/net、x/text、x/sys 依赖。
+
+- **BREAKING**: Kind 仅保留 code/name 身份，删除 `KindOption`、`DefaultMessage` 和反向 `Kind.Is`，统一使用 `errors.Is(err, Kind)`。
+- **BREAKING**: 诊断消息改为 `Kind.New(msg, opts...)` / `Kind.Wrap(cause, msg, opts...)` 的固定参数，允许显式空字符串；删除核心 `Message` / `Messagef` 选项，格式化使用 `fmt.Sprintf`，HTTP/gRPC 公开消息选项不变。
+- **BREAKING**: 提取函数只选择明确主错误；多个原因未被外层业务实例分类时不任取分支。标准 `errors.Is/As` 仍遍历完整错误树。
+- **BREAKING**: 删除全局抓栈开关，改为 `NewRegistry(CaptureStack())`；`Tracer.StackTrace` 只返回节点自己的栈，`StackOf` 查找原因中的首个非空栈。
+- **BREAKING**: 删除隐式 `MarshalJSON` 和协议装饰器。诊断字段不默认公开，HTTP/gRPC 默认返回通用错误，通过出口 `Message`、`Field`、`Identity` 显式公开。
+- **BREAKING**: 包路径改为顶层 `http/slog/grpc/zap/zerolog/logrus/otel`，不保留旧路径转发。第三方集成仍各自独立 module。
+- **BREAKING**: 四种日志统一嵌套节点 schema，`cause` 改为 `causes` 树，不合并兄弟 attrs；logrus 从 dot-key 改为嵌套 `err` 对象。诊断最多 256 节点、64 层，截断显式标记；属性编码失败仅降级该属性。
+- HTTP 新增 `ResponseOf`、`Write` 和可选上下文 `Responder`；写头前完成编码，非法状态或字段编码失败返回安全 500 并报告错误。
+- gRPC 只保留薄转换 `ToStatus` / `FromStatus(st, registry)`，删除拦截器和流包装。原生/远端状态仅在无外层业务分类且无出口选项时透传；有选项从安全默认值重建。
+- gRPC 固定版本标记隔离保留键，不再提供可配置 Domain 或属性顺序元数据；code/name 同时匹配显式 Registry 才建立身份，nil 不绑定。
+- OTel 复用共享诊断，保留标准错误事件和状态；prefix 改为调用级 `Prefix`，不自动携带 HTTP/gRPC 状态或 telemetry 装饰器字段。
+- CLI 删除默认消息解析和文档消息列；保留扫描错误非零退出、排除规则前置、重叠路径去重及失败不覆盖文件等修复。
+- 更新三个示例、跨模块测试和无 replace 消费验证；候选模块依赖核心 `v0.2.0`，发布标签改为 `<name>/v0.2.0`。当前未发布、未打标签。
+
 ## [0.1.4] - 2026-06-10
 
 ### Changed
@@ -46,7 +64,7 @@
 
 #### CI / 工程
 
-- workflow 新增 `errkindlint` 自检步骤; 覆盖整仓 (跨 `go.mod`), 防止重复错误码流入主干
+- 提供 `errkindlint` 自检命令，可接入 CI；当前 workflow 未执行该命令
 - 覆盖率 gate 同时排除 `cmd/` (CLI 入口)、`internal/` (工具链支持代码)、`examples/` (演示代码), 三者都不属于"用户使用的核心库 API"; 修正后核心覆盖率 ≥ 90% 阈值仍稳定通过 (本地实测 97.5%)
 - 新增 `scripts/test.sh`: 遍历仓内全部 `go.mod`, 串行跑 `go vet` / `go build` / `go test`, 让本地一行命令复刻 CI 的多 module 行为 (兼容 macOS 自带 bash 3.2)
 - `scripts/test.sh` 增加 `--group` 选项, 在每个 module 前后发射 `::group::` / `::endgroup::`; CI workflow 的 vet / build / test 三段循环合并为一行 `./scripts/test.sh --group -race`, 与本地行为完全一致, 单一事实源, 避免双份维护漂移
@@ -115,7 +133,7 @@
   - `Kinds() / LookupCode / LookupName` 用于错误码文档生成
   - `NewRegistry()` 支持测试隔离 / 多租户
 - 错误实例 `*kerr` (不导出, 通过 `Kind.New / Kind.Wrap` 构造)
-  - `Wrap(nil, ...)` 返回 `nil`, 与 `fmt.Errorf("%w", nil)` 一致
+  - `Wrap(nil, ...)` 返回 `nil`，不同于返回非 nil 错误的 `fmt.Errorf("%w", nil)`
   - 完全兼容 `errors.Is` / `errors.As` / `errors.Unwrap`
 - `Option`: `Message`, `Messagef`, `With`
 - 提取 helper: `KindOf`, `CodeOf` / `NameOf` (nil-safe), `MessageOf`, `AttrsOf` (拷贝), `AllAttrs` (扁平合并)
