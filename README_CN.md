@@ -30,8 +30,6 @@ go get github.com/im-wmkong/errkind/grpc
 
 其他集成将路径末尾的 `grpc` 换成 `zap`、`zerolog`、`logrus` 或 `otel` 即可。
 
-> 本文对应尚未发布的 v0.2.0 API，当前 `go get` 尚不能安装本文所述版本及新集成路径；提前体验请使用[参与贡献](#参与贡献)中的本地联调步骤。
-
 ## 能力总览
 
 所有包的导入路径均以 `github.com/im-wmkong/errkind` 开头。
