@@ -30,8 +30,6 @@ go get github.com/im-wmkong/errkind/grpc
 
 For other integrations, replace the final `grpc` path segment with `zap`, `zerolog`, `logrus`, or `otel`.
 
-> This guide describes the unreleased v0.2.0 API. These commands cannot yet install the documented version and new integration paths; to try them now, follow the local development instructions under [Contributing](#contributing).
-
 ## Capability Map
 
 All import paths start with `github.com/im-wmkong/errkind`.
