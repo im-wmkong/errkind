@@ -2,100 +2,58 @@ package errkind
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 )
 
-// Registry 持有一组 Kind, 保证 (code, name) 在自身范围内唯一。
-//
-// 通常使用包级 Define / Kinds / LookupCode / LookupName 即可;
-// 测试或多租户场景可以 NewRegistry() 创建独立注册中心。
+// Registry isolates identities and enforces unique codes and names.
+// Its zero value is ready to use. A Registry must not be copied after use.
 type Registry struct {
-	mu           sync.RWMutex
-	byCode       map[Code]*Kind
-	byName       map[string]*Kind
-	all          []*Kind
-	captureStack bool
+	mu     sync.RWMutex
+	byCode map[Code]*Kind
+	byName map[string]*Kind
+	kinds  []*Kind
 }
 
-type registryConfig struct{ captureStack bool }
+// NewRegistry creates an empty Registry with an independent error catalog.
+func NewRegistry() *Registry { return &Registry{} }
 
-type RegistryOption func(*registryConfig)
-
-func CaptureStack() RegistryOption {
-	return func(c *registryConfig) { c.captureStack = true }
-}
-
-func NewRegistry(opts ...RegistryOption) *Registry {
-	var config registryConfig
-	for _, option := range opts {
-		option(&config)
-	}
-	return &Registry{
-		byCode:       map[Code]*Kind{},
-		byName:       map[string]*Kind{},
-		captureStack: config.captureStack,
-	}
-}
-
-// Define 注册并返回一个新的 Kind; 重复 code/name 立即 panic。
+// Define registers a Kind. An empty name or duplicate code/name panics.
 func (r *Registry) Define(code Code, name string) *Kind {
 	if name == "" {
 		panic("errkind: Define name must not be empty")
 	}
-	k := &Kind{code: code, name: name, registry: r}
-
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if existed, ok := r.byCode[code]; ok {
-		panic(fmt.Sprintf("errkind: duplicate code %d (registered as %q, new %q)",
-			code, existed.name, name))
+	if registered := r.byCode[code]; registered != nil {
+		panic(fmt.Sprintf("errkind: duplicate code %d (registered as %q, new %q)", code, registered.name, name))
 	}
-	if existed, ok := r.byName[name]; ok {
-		panic(fmt.Sprintf("errkind: duplicate name %q (registered with code %d, new %d)",
-			name, existed.code, code))
+	if registered := r.byName[name]; registered != nil {
+		panic(fmt.Sprintf("errkind: duplicate name %q (registered with code %d, new %d)", name, registered.code, code))
 	}
-	r.byCode[code] = k
-	r.byName[name] = k
-	r.all = append(r.all, k)
-	return k
+	if r.byCode == nil {
+		r.byCode = make(map[Code]*Kind)
+	}
+	if r.byName == nil {
+		r.byName = make(map[string]*Kind)
+	}
+	kind := &Kind{code: code, name: name}
+	r.byCode[code], r.byName[name] = kind, kind
+	r.kinds = append(r.kinds, kind)
+	return kind
 }
 
-// Kinds 返回所有已注册 Kind, 按注册顺序; 用于生成错误码文档。
+// Kinds returns a copy in registration order, suitable for application-owned catalogs.
 func (r *Registry) Kinds() []*Kind {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]*Kind, len(r.all))
-	copy(out, r.all)
-	return out
-}
-
-// LookupCode 按 code 查找; 不存在返回 nil。
-func (r *Registry) LookupCode(c Code) *Kind {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.byCode[c]
-}
-
-// LookupName 按 name 查找; 不存在返回 nil。
-func (r *Registry) LookupName(n string) *Kind {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.byName[n]
+	return slices.Clone(r.kinds)
 }
 
 var defaultRegistry = NewRegistry()
 
-func DefaultRegistry() *Registry { return defaultRegistry }
+// Define registers an identity in the default Registry.
+func Define(code Code, name string) *Kind { return defaultRegistry.Define(code, name) }
 
-func Define(code Code, name string) *Kind {
-	return defaultRegistry.Define(code, name)
-}
-
-// Kinds 返回默认注册中心的所有 Kind。
+// Kinds returns the default Registry's catalog.
 func Kinds() []*Kind { return defaultRegistry.Kinds() }
-
-// LookupCode 默认注册中心查询。
-func LookupCode(c Code) *Kind { return defaultRegistry.LookupCode(c) }
-
-// LookupName 默认注册中心查询。
-func LookupName(n string) *Kind { return defaultRegistry.LookupName(n) }

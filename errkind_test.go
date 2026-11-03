@@ -1,10 +1,9 @@
 package errkind_test
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
+	"os"
 	"sync"
 	"testing"
 
@@ -13,113 +12,190 @@ import (
 
 var packageLevelKind = errkind.Define(900001, "pkg_level_define")
 
-func TestIdentity(t *testing.T) {
+func requireError(t *testing.T, err error) *errkind.Error {
+	t.Helper()
+	var detail *errkind.Error
+	if !errors.As(err, &detail) {
+		t.Fatalf("expected an *errkind.Error, got %T", err)
+	}
+	return detail
+}
+
+func TestCodeRange(t *testing.T) {
+	registry := errkind.NewRegistry()
+	for _, test := range []struct {
+		code errkind.Code
+		text string
+	}{
+		{0, "0"},
+		{1, "1"},
+		{1<<32 - 1, "4294967295"},
+		{1 << 32, "4294967296"},
+		{1<<32 + 1, "4294967297"},
+		{1<<64 - 1, "18446744073709551615"},
+	} {
+		t.Run(test.text, func(t *testing.T) {
+			name := "code_" + test.text
+			kind := registry.Define(test.code, name)
+			err := kind.New("failed")
+			detail := requireError(t, err)
+			if detail.Kind().Code() != test.code || !errors.Is(err, kind) {
+				t.Fatal("code or identity changed")
+			}
+			if kind.Error() != name+"("+test.text+")" || err.Error() != kind.Error()+": failed" {
+				t.Fatal("error text lost code precision")
+			}
+		})
+	}
+}
+
+func TestIdentityAndCauses(t *testing.T) {
 	r := errkind.NewRegistry()
 	a, b := r.Define(0, "a"), r.Define(2, "b")
 	other := errkind.NewRegistry().Define(0, "a")
-	cause := errors.New("root")
+	cause := &os.PathError{Op: "read", Path: "user", Err: os.ErrNotExist}
 	first, second := a.New("first"), a.New("second")
-	err := b.Wrap(fmt.Errorf("context: %w", errors.Join(a.Wrap(cause, "inner"), second)), "outer")
-	if first == second || !errors.Is(err, a) || !errors.Is(err, b) || !errors.Is(err, cause) || errors.Is(err, other) {
+	joined := errors.Join(a.Wrap(cause, "inner"), second)
+	err := b.Wrap(fmt.Errorf("context: %w", joined), "outer")
+	if first == second || !errors.Is(err, a) || !errors.Is(err, b) || !errors.Is(err, cause) || !errors.Is(err, os.ErrNotExist) || errors.Is(err, other) {
 		t.Fatal("identity or cause matching failed")
 	}
 	if errors.Is(a, first) || errors.Is(first, second) || errors.Is(nil, a) || a.Error() != "a(0)" {
 		t.Fatal("matching must be directional and pointer-based")
 	}
-	var d errkind.Details
-	if !errors.As(err, &d) || d.Name() != "b" || errkind.KindOf(err) != b {
+	var pathError *os.PathError
+	if !errors.As(err, &pathError) || pathError != cause {
+		t.Fatal("standard errors.As lost the underlying cause")
+	}
+	detail := requireError(t, err)
+	if detail.Kind() != b || detail.Message() != "outer" {
 		t.Fatal("outer instance must win")
 	}
-	if a.Wrap(nil, "ignored") != nil {
-		t.Fatal("Wrap(nil) must return nil")
+	if a.Wrap(nil, "ignored") != nil || errors.Unwrap(a.Wrap(cause, "")) != cause {
+		t.Fatal("Wrap must preserve nil and non-nil causes")
 	}
 }
 
 func TestMessages(t *testing.T) {
 	k := errkind.NewRegistry().Define(1, "failed")
 	cause := errors.New("root")
-	opts := []errkind.Option{errkind.With("uid", 42)}
-	for _, msg := range []string{"", "查询用户失败", "literal %s", fmt.Sprintf("uid=%d", 42)} {
-		t.Run(msg, func(t *testing.T) {
-			for _, err := range []error{k.New(msg, opts...), k.Wrap(cause, msg, opts...)} {
-				if errkind.MessageOf(err) != msg || err.(errkind.Details).Message() != msg {
-					t.Fatalf("message changed: %v", err)
+	attrs := errkind.Attrs{errkind.With("uid", 42)}
+	for _, message := range []string{"", "查询用户失败", "literal %s", fmt.Sprintf("uid=%d", 42)} {
+		t.Run(message, func(t *testing.T) {
+			for _, err := range []error{k.New(message, attrs...), k.Wrap(cause, message, attrs...)} {
+				detail := requireError(t, err)
+				if detail.Message() != message || detail.Attrs()[0].Value != 42 {
+					t.Fatalf("message or parameters changed: %q %+v", detail.Message(), detail.Attrs())
 				}
 				want := "failed(1)"
-				if msg != "" {
-					want += ": " + msg
+				if message != "" {
+					want += ": " + message
 				}
 				if errors.Unwrap(err) != nil {
-					if !errors.Is(err, cause) {
-						t.Fatal("cause lost")
-					}
 					want += ": root"
 				}
-				if err.Error() != want || errkind.AttrsOf(err)[0].Val != 42 {
-					t.Fatalf("details: %v", err)
+				if err.Error() != want {
+					t.Fatalf("got %q; want %q", err, want)
 				}
 			}
 		})
 	}
 }
 
-func TestPrimary(t *testing.T) {
+func TestErrorAs(t *testing.T) {
 	r := errkind.NewRegistry()
 	a, b := r.Define(0, "a"), r.Define(2, "b")
 	leaf := a.New("internal", errkind.With("uid", 1))
-	for _, err := range []error{leaf, fmt.Errorf("lookup: %w", leaf), errors.Join(leaf)} {
-		if c, ok := errkind.CodeOf(err); !ok || c != 0 {
-			t.Fatalf("zero code lost: %v %v", c, ok)
-		}
-		if n, ok := errkind.NameOf(err); !ok || n != "a" || errkind.KindOf(err) != a || errkind.MessageOf(err) != "internal" || len(errkind.AttrsOf(err)) != 1 {
-			t.Fatal("primary details lost")
-		}
+	detail := requireError(t, leaf)
+	if detail.Kind().Code() != 0 || detail.Kind().Name() != "a" || detail.Message() != "internal" || len(detail.Attrs()) != 1 {
+		t.Fatal("instance metadata changed")
 	}
-	for _, err := range []error{nil, errors.New("plain"), a, errors.Join(leaf, b.New("")), fmt.Errorf("both: %w %w", leaf, b.New(""))} {
-		if _, ok := errkind.CodeOf(err); ok {
-			t.Fatalf("unexpected primary: %v", err)
-		}
-		if _, ok := errkind.NameOf(err); ok || errkind.KindOf(err) != nil || errkind.AttrsOf(err) != nil {
-			t.Fatalf("ambiguous or absent primary: %v", err)
-		}
+	right := b.New("right")
+	outer := b.Wrap(errors.Join(leaf, right), "batch")
+	deep := leaf
+	for i := 0; i < 300; i++ {
+		deep = fmt.Errorf("context: %w", deep)
 	}
-	if errkind.MessageOf(nil) != "" || errkind.MessageOf(errors.New("plain")) != "plain" || errkind.MessageOf(a.New("")) != "" {
-		t.Fatal("message fallback")
+	for _, test := range []struct {
+		name string
+		err  error
+		want *errkind.Error
+	}{
+		{"direct", leaf, leaf.(*errkind.Error)},
+		{"wrapped", fmt.Errorf("lookup: %w", leaf), leaf.(*errkind.Error)},
+		{"deep", deep, leaf.(*errkind.Error)},
+		{"single_join", errors.Join(leaf), leaf.(*errkind.Error)},
+		{"join_left", errors.Join(leaf, right), leaf.(*errkind.Error)},
+		{"join_right", errors.Join(right, leaf), right.(*errkind.Error)},
+		{"multiple_wrap", fmt.Errorf("both: %w %w", leaf, right), leaf.(*errkind.Error)},
+		{"outer", outer, outer.(*errkind.Error)},
+		{"bare_kind", a, nil},
+		{"plain", errors.New("plain"), nil},
+		{"nil", nil, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var detail *errkind.Error
+			if matched := errors.As(test.err, &detail); matched != (test.want != nil) || detail != test.want {
+				t.Fatalf("got %p; want %p", detail, test.want)
+			}
+		})
 	}
-	joined := errors.Join(leaf, b.New(""))
-	if errkind.MessageOf(joined) != joined.Error() || errkind.KindOf(b.Wrap(joined, "outer")) != b {
-		t.Fatal("join must need explicit classification")
+	var identity *errkind.Kind
+	if !errors.As(fmt.Errorf("lookup: %w", a), &identity) || identity != a || !errors.Is(a, a) {
+		t.Fatal("bare Kinds must retain standard error identity")
 	}
 }
 
-func TestAttrs(t *testing.T) {
-	r := errkind.NewRegistry()
-	a, b := r.Define(1, "a"), r.Define(2, "b")
+func TestAttrsOwnershipAndOverrides(t *testing.T) {
+	k := errkind.NewRegistry().Define(1, "a")
 	value := map[string]int{"n": 1}
-	err := a.New(fmt.Sprintf("uid=%d", 2), errkind.With("uid", 1), errkind.With("map", value), errkind.With("uid", 2))
-	attrs := errkind.AttrsOf(err)
-	if len(attrs) != 2 || attrs[0].Key != "uid" || attrs[0].Val != 2 || errkind.MessageOf(err) != "uid=2" {
-		t.Fatal("attribute order/override or message")
+	attrs := errkind.Attrs{errkind.With("uid", 1), errkind.With("map", value), errkind.With("uid", 2)}
+	cloned := attrs.Clone()
+	if len(cloned) != 3 || cloned[0].Value != 1 || cloned[2].Value != 2 {
+		t.Fatal("Clone must preserve duplicate keys and their values")
 	}
-	attrs[0].Val = 99
-	d := err.(errkind.Details)
-	copy := d.Attrs()
-	copy[0].Val = 100
-	if d.Attrs()[0].Val != 2 {
-		t.Fatal("slice alias")
+	cloned[0].Value = 99
+	if attrs[0].Value != 1 {
+		t.Fatal("Clone must own its slice")
+	}
+	err := k.New("query", attrs...)
+	attrs[0].Value = 99
+	detail := requireError(t, err)
+	parameters := detail.Attrs()
+	if len(parameters) != 2 || parameters[0].Key != "uid" || parameters[0].Value != 2 || parameters[1].Key != "map" {
+		t.Fatalf("attribute order or override: %+v", parameters)
+	}
+	parameters[0].Value = 100
+	again := detail.Attrs()
+	if again[0].Value != 2 {
+		t.Fatal("Attrs must return its own slice")
 	}
 	value["n"] = 3
-	if d.Attrs()[1].Val.(map[string]int)["n"] != 3 {
-		t.Fatal("values should not be deep-copied")
+	if again[1].Value.(map[string]int)["n"] != 3 {
+		t.Fatal("values are shallow copies")
 	}
-	tree := b.Wrap(errors.Join(err, a.New("", errkind.With("right", true), errkind.With("uid", 4))), "", errkind.With("uid", 5))
-	all := errkind.AllAttrs(fmt.Errorf("context: %w", tree))
-	if len(all) != 3 || all[0].Val != 5 || all[2].Key != "right" {
-		t.Fatalf("flat view: %v", all)
+	if empty := requireError(t, k.New("")); empty.Attrs() != nil {
+		t.Fatal("empty attributes")
 	}
-	if errkind.AllAttrs(nil) != nil || errkind.AllAttrs(errors.New("plain")) != nil || errkind.AttrsOf(a.New("")) != nil {
-		t.Fatal("empty attrs")
+}
+
+func TestErrorConcurrentReaders(t *testing.T) {
+	kind := errkind.NewRegistry().Define(1, "failed")
+	cause := errors.New("database")
+	detail := requireError(t, kind.Wrap(cause, "query", errkind.With("uid", 42)))
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			attrs := detail.Attrs()
+			if detail.Kind() != kind || detail.Message() != "query" || attrs[0].Value != 42 || detail.Unwrap() != cause || detail.Error() != "failed(1): query: database" {
+				t.Error("concurrent read changed error details")
+			}
+			attrs[0].Value = 99
+		}()
 	}
+	wg.Wait()
 }
 
 func TestRegistry(t *testing.T) {
@@ -138,18 +214,22 @@ func TestRegistry(t *testing.T) {
 			r.Define(duplicate.code, duplicate.name)
 		})
 	}
-	r := errkind.NewRegistry()
-	k := r.Define(7, "lookup")
-	if k.Code() != 7 || k.Name() != "lookup" || r.LookupCode(7) != k || r.LookupName("lookup") != k || r.LookupCode(8) != nil || r.LookupName("missing") != nil {
-		t.Fatal("lookup")
-	}
+	var r errkind.Registry
+	a, b := r.Define(7, "a"), r.Define(8, "b")
 	list := r.Kinds()
-	list[0] = nil
-	if r.Kinds()[0] != k {
-		t.Fatal("Kinds alias")
+	if len(list) != 2 || list[0] != a || list[1] != b {
+		t.Fatal("catalog order")
 	}
-	if errkind.DefaultRegistry().LookupCode(900001) != packageLevelKind || errkind.LookupCode(900001) != packageLevelKind || errkind.LookupName("pkg_level_define") != packageLevelKind || len(errkind.Kinds()) == 0 {
-		t.Fatal("default registry")
+	list[0] = nil
+	if r.Kinds()[0] != a {
+		t.Fatal("catalog slice alias")
+	}
+	found := false
+	for _, kind := range errkind.Kinds() {
+		found = found || kind == packageLevelKind
+	}
+	if !found {
+		t.Fatal("default registry catalog")
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ {
@@ -158,75 +238,36 @@ func TestRegistry(t *testing.T) {
 			defer wg.Done()
 			r.Define(errkind.Code(i+100), fmt.Sprint(i))
 			_ = r.Kinds()
-			_ = r.LookupCode(7)
 		}(i)
 	}
 	wg.Wait()
-}
-
-type tracer struct{ frames []errkind.Frame }
-
-func (t tracer) Error() string               { return "traced" }
-func (t tracer) StackTrace() []errkind.Frame { return t.frames }
-
-func TestStacks(t *testing.T) {
-	plain := errkind.NewRegistry().Define(1, "plain")
-	traced := errkind.NewRegistry(errkind.CaptureStack()).Define(1, "traced")
-	if len(errkind.StackOf(plain.New(""))) != 0 || len(errkind.StackOf(nil)) != 0 {
-		t.Fatal("default stacks")
-	}
-	inner := traced.New("")
-	frames := errkind.StackOf(inner)
-	if len(frames) == 0 || !strings.Contains(frames[0].Function, "TestStacks") {
-		t.Fatalf("callsite: %v", frames)
-	}
-	for _, cause := range []error{inner, errors.Join(plain.New(""), inner), tracer{frames: []errkind.Frame{{Function: "fake", File: "f.go", Line: 1}}}} {
-		wrapped := traced.Wrap(cause, "")
-		if len(wrapped.(errkind.Tracer).StackTrace()) != 0 || len(errkind.StackOf(wrapped)) == 0 {
-			t.Fatal("stack reuse")
-		}
-	}
-	for _, cause := range []error{plain.New(""), tracer{}} {
-		if len(traced.Wrap(cause, "").(errkind.Tracer).StackTrace()) == 0 {
-			t.Fatal("empty tracer must not suppress capture")
-		}
-	}
-	frames[0].File = "changed"
-	if errkind.StackOf(inner)[0].File == "changed" {
-		t.Fatal("stack slice alias")
-	}
-	if (errkind.Frame{Function: "f", File: "f.go", Line: 3}).String() != "f\n\tf.go:3" {
-		t.Fatal("frame format")
+	if len(r.Kinds()) != 34 {
+		t.Fatal("concurrent registrations lost")
 	}
 }
 
-func TestFormattingAndNoImplicitJSON(t *testing.T) {
-	for _, r := range []*errkind.Registry{errkind.NewRegistry(), errkind.NewRegistry(errkind.CaptureStack())} {
-		k := r.Define(7, "boom")
-		err := k.Wrap(errors.New("root"), "context")
-		if err.Error() != "boom(7): context: root" || fmt.Sprintf("%v", err) != err.Error() || fmt.Sprintf("%s", err) != err.Error() || fmt.Sprintf("%q", err) != fmt.Sprintf("%q", err.Error()) {
-			t.Fatal("format")
+func TestStandardFormatting(t *testing.T) {
+	k := errkind.NewRegistry().Define(7, "boom")
+	err := k.Wrap(errors.New("root"), "context")
+	for _, format := range []string{"%v", "%s", "%+v"} {
+		if fmt.Sprintf(format, err) != "boom(7): context: root" {
+			t.Fatal("standard formatting")
 		}
-		if len(errkind.StackOf(err)) > 0 && !strings.Contains(fmt.Sprintf("%+v", err), ".go:") {
-			t.Fatal("formatted stack")
-		}
-		if _, ok := err.(json.Marshaler); ok {
-			t.Fatal("implicit diagnostic JSON must not be exported")
-		}
-		raw, e := json.Marshal(err)
-		if e != nil || string(raw) != "{}" {
-			t.Fatalf("JSON: %s %v", raw, e)
-		}
+	}
+	if fmt.Sprintf("%q", err) != fmt.Sprintf("%q", err.Error()) {
+		t.Fatal("quoted format")
 	}
 }
 
-type cyclic struct{}
-
-func (*cyclic) Error() string   { return "cycle" }
-func (c *cyclic) Unwrap() error { return c }
-func TestTraversalBound(t *testing.T) {
-	c := &cyclic{}
-	if errkind.KindOf(c) != nil || errkind.AllAttrs(c) != nil || errkind.StackOf(c) != nil {
-		t.Fatal("cycle")
+func TestNilKindConstruction(t *testing.T) {
+	var kind *errkind.Kind
+	if kind.Wrap(nil, "ignored") != nil {
+		t.Fatal("nil cause must remain a nil error")
 	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("nil Kind cannot create a valid instance")
+		}
+	}()
+	_ = kind.New("invalid receiver")
 }

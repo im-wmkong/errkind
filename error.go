@@ -1,54 +1,38 @@
 package errkind
 
-import (
-	"fmt"
-	"io"
-	"strings"
-)
-
-type kerr struct {
+// Error is an instance of a Kind with a message, attributes and an optional cause.
+// Kind.New and Kind.Wrap create valid instances; the zero value is invalid.
+// Use errors.As to find an *Error through standard wrappers and joined errors.
+type Error struct {
 	kind    *Kind
 	message string
-	attrs   []Attr
+	attrs   Attrs
 	cause   error
-	pcs     []uintptr
 }
 
-func (e *kerr) Error() string {
-	var b strings.Builder
-	b.WriteString(e.kind.Error())
+// Kind returns the instance's stable identity.
+func (e *Error) Kind() *Kind { return e.kind }
+
+// Message returns the instance's literal message.
+func (e *Error) Message() string { return e.message }
+
+// Attrs returns a shallow copy in insertion order. Referenced values remain shared.
+func (e *Error) Attrs() Attrs { return e.attrs.Clone() }
+
+// Error returns the identity, message and cause as text.
+func (e *Error) Error() string {
+	text := e.kind.Error()
 	if e.message != "" {
-		b.WriteString(": ")
-		b.WriteString(e.message)
+		text += ": " + e.message
 	}
 	if e.cause != nil {
-		b.WriteString(": ")
-		b.WriteString(e.cause.Error())
+		text += ": " + e.cause.Error()
 	}
-	return b.String()
+	return text
 }
 
-func (e *kerr) Unwrap() error              { return e.cause }
-func (e *kerr) Kind() *Kind                { return e.kind }
-func (e *kerr) BusinessCode() (Code, bool) { return e.kind.code, true }
-func (e *kerr) Name() string               { return e.kind.name }
-func (e *kerr) Message() string            { return e.message }
-func (e *kerr) Is(target error) bool       { return target == e.kind }
-func (e *kerr) Attrs() []Attr              { return append([]Attr(nil), e.attrs...) }
+// Unwrap returns the underlying cause for errors.Unwrap, errors.Is and errors.As.
+func (e *Error) Unwrap() error { return e.cause }
 
-// StackTrace returns this node's stack; StackOf also searches causes.
-func (e *kerr) StackTrace() []Frame { return resolveFrames(e.pcs) }
-
-func (e *kerr) Format(s fmt.State, verb rune) {
-	switch verb {
-	case 'v', 's':
-		_, _ = io.WriteString(s, e.Error())
-		if verb == 'v' && s.Flag('+') {
-			for _, f := range StackOf(e) {
-				_, _ = io.WriteString(s, "\n"+f.String())
-			}
-		}
-	case 'q':
-		_, _ = fmt.Fprintf(s, "%q", e.Error())
-	}
-}
+// Is reports whether target is the instance's Kind.
+func (e *Error) Is(target error) bool { return target == e.kind }
