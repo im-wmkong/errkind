@@ -10,7 +10,8 @@
 // Use errors.Is to match a Kind and errors.As with a *Kind target to read the
 // first business identity from either a bare Kind or an Error. Use errors.As
 // with a pointer to Error to read the first instance's Code, Name, Message
-// and Attrs.
+// and attributes. Attr reads a key from that instance without searching the
+// cause; Attrs returns a shallow copy of all its attributes.
 // Standard wrappers and joined errors follow Go's traversal rules.
 // Applications choose logging fields, protocol mappings and handling policies.
 package errkind

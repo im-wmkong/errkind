@@ -17,6 +17,18 @@ func With(key string, value any) Attr {
 	return Attr{Key: key, Value: value}
 }
 
+// Get returns the last value for key and whether it exists.
+// A present nil value returns (nil, true); a missing key returns (nil, false).
+// Referenced values remain shared.
+func (attrs Attrs) Get(key string) (any, bool) {
+	for i := len(attrs) - 1; i >= 0; i-- {
+		if attrs[i].Key == key {
+			return attrs[i].Value, true
+		}
+	}
+	return nil, false
+}
+
 // Clone returns a shallow copy, preserving all attributes and their order.
 func (attrs Attrs) Clone() Attrs { return slices.Clone(attrs) }
 

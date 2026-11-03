@@ -1,5 +1,7 @@
 package errkind
 
+import "strings"
+
 // Error describes a business error instance. Registered Kinds create private
 // implementations whose fields can only be read through this interface.
 // Attribute values and the underlying cause remain shared with their owners.
@@ -21,6 +23,11 @@ type Error interface {
 	// Message returns the instance's literal message.
 	Message() string
 
+	// Attr returns this instance's value for key without searching the cause.
+	// The boolean distinguishes a present nil value from a missing key.
+	// Referenced values remain shared.
+	Attr(key string) (any, bool)
+
 	// Attrs returns a shallow copy in insertion order. Referenced values remain shared.
 	Attrs() Attrs
 }
@@ -40,18 +47,32 @@ func (e *instance) Name() string { return e.kind.Name() }
 
 func (e *instance) Message() string { return e.message }
 
+func (e *instance) Attr(key string) (any, bool) { return e.attrs.Get(key) }
+
 func (e *instance) Attrs() Attrs { return e.attrs.Clone() }
 
 // Error returns the identity, message and cause as text.
 func (e *instance) Error() string {
-	text := e.kind.Error()
-	if e.message != "" {
-		text += ": " + e.message
+	var text strings.Builder
+	for {
+		text.WriteString(e.kind.Error())
+		if e.message != "" {
+			text.WriteString(": ")
+			text.WriteString(e.message)
+		}
+		if e.cause == nil {
+			break
+		}
+		text.WriteString(": ")
+		// Only traverse our own instances; other errors control their text.
+		next, ok := e.cause.(*instance)
+		if !ok {
+			text.WriteString(e.cause.Error())
+			break
+		}
+		e = next
 	}
-	if e.cause != nil {
-		text += ": " + e.cause.Error()
-	}
-	return text
+	return text.String()
 }
 
 // Unwrap returns the underlying cause for errors.Unwrap, errors.Is and errors.As.

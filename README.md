@@ -15,7 +15,7 @@
 - 🪪 **稳定的业务身份** —— `Kind` 同时是错误值与匹配目标；通过 `errors.Is` 按身份判断，实例消息和属性可以各不相同。
 - 🔗 **标准原因链** —— `Kind.New / Wrap` 返回可直接读取详情的 `Error`，`Wrap` 保留底层原因，兼容标准包装和多分支错误。
 - 🔎 **统一读取身份** —— `errors.As` 以 `Kind` 接口为目标，统一读取裸 Kind 与实例的身份；以 `Error` 接口为目标读取实例消息和参数。
-- 🏷️ **有序实例属性** —— `With` 创建属性，`Attrs.Clone / Unique` 提供浅拷贝与按键去重；同名键保留最后值和首次位置。
+- 🏷️ **有序实例属性** —— `With` 创建属性，`Error.Attr` 按键读取，`Error.Attrs` 返回全部属性的浅拷贝；同名键保留最后值和首次位置。
 - 📦 **独立或默认注册表** —— 包级 `Define / Kinds` 使用默认 Registry；`NewRegistry` 隔离定义，支持并发注册和目录读取。
 
 ## 📦 安装
@@ -31,9 +31,9 @@ go get github.com/im-wmkong/errkind
 | 组件 | 核心职责 | 关键能力 |
 | :--- | :--- | :--- |
 | **`Kind`** | 描述业务错误身份的公开接口 | `Define` 返回不可变身份；`Code / Name` 读取错误码与名称；`New / Wrap` 创建实例。 |
-| **`Error`** | 描述本次失败的公开接口 | `Kind / Code / Name / Message / Attrs` 读取实例信息；通过标准库 `errors.Is / As / Unwrap` 匹配、提取和访问原因。 |
+| **`Error`** | 描述本次失败的公开接口 | `Kind / Code / Name / Message / Attr / Attrs` 读取实例信息；通过标准库 `errors.Is / As / Unwrap` 匹配、提取和访问原因。 |
 | **`Registry`** | 管理错误定义 | `NewRegistry` 创建独立注册表；`Define` 检查 code/name 唯一性；`Kinds` 返回注册目录。 |
-| **`Attr / Attrs`** | 携带实例参数 | `With(key, value)` 创建属性；`Clone` 保留全部元素；`Unique` 生成按键去重的副本。 |
+| **`Attr / Attrs`** | 携带实例参数 | `With(key, value)` 创建属性；`Get` 按键读取最后值；`Clone` 保留全部元素；`Unique` 生成按键去重的副本。 |
 | **`Code`** | 表达业务错误码 | 基于 `uint64` 的命名类型，支持完整的 64 位无符号范围，0 是有效值。 |
 
 → API 参考：[pkg.go.dev](https://pkg.go.dev/github.com/im-wmkong/errkind)。源码入口见 [kind.go](kind.go)、[error.go](error.go)、[registry.go](registry.go) 和 [attr.go](attr.go)。
@@ -125,7 +125,7 @@ fmt.Println(errors.Is(err, ErrUserNotFound)) // true
 fmt.Println(errors.Unwrap(err) == nil)       // true
 ```
 
-`New / Wrap` 返回 `Error` 接口，可以直接调用 `Kind / Code / Name / Message / Attrs`。`Code()` 和 `Name()` 分别返回所属 Kind 的错误码和名称，与 `Kind().Code()`、`Kind().Name()` 一致。`New` 与原因非 nil 的 `Wrap` 每次创建独立实例；实例的消息、属性和底层原因由本次调用决定，共享的 Kind 用于匹配业务类别。
+`New / Wrap` 返回 `Error` 接口，可以直接调用 `Kind / Code / Name / Message / Attr / Attrs`。`Code()` 和 `Name()` 分别返回所属 Kind 的错误码和名称，与 `Kind().Code()`、`Kind().Name()` 一致。`New` 与原因非 nil 的 `Wrap` 每次创建独立实例；实例的消息、属性和底层原因由本次调用决定，共享的 Kind 用于匹配业务类别。
 
 有效 Kind 的 `Wrap(nil, ...)` 返回 nil 接口，赋给内置 `error` 或从返回 `error` 的函数传出后仍然是 nil：
 
@@ -160,20 +160,28 @@ attrs := errkind.Attrs{
 	errkind.With("uid", 42),
 }
 
-fmt.Println(attrs.Clone())  // [{uid 1} {operation profile} {uid 42}]
-fmt.Println(attrs.Unique()) // [{uid 42} {operation profile}]
+fmt.Println(attrs.Clone())    // [{uid 1} {operation profile} {uid 42}]
+fmt.Println(attrs.Unique())   // [{uid 42} {operation profile}]
+fmt.Println(attrs.Get("uid")) // 42 true
 
 err := ErrUserNotFound.New("missing active user", attrs...)
+fmt.Println(err.Attr("uid"))     // 42 true
+fmt.Println(err.Attr("missing")) // <nil> false
+
 returned := err.Attrs()
 returned[0].Value = 99
 fmt.Println(err.Attrs()) // [{uid 42} {operation profile}]
 ```
 
-`Clone()` 浅拷贝全部元素，保留顺序与重复键。`Unique()` 返回去重后的浅拷贝，同名键最后的值胜出，位置沿用第一次出现的位置；空集合返回 nil。
+`Get(key)` 返回指定键最后一次设置的值；键不存在时返回 `(nil, false)`，键存在但最后值为 nil 时返回 `(nil, true)`。空字符串也可以作为属性键。
+
+`Clone()` 浅拷贝全部元素，保留顺序与重复键。`Unique()` 返回去重后的浅拷贝，同名键最后的值胜出，位置沿用第一次出现的位置；空集合返回 nil。`Get(key)` 在去重前后的结果一致。
 
 `New / Wrap` 自动通过 `Unique()` 复制和去重属性。`Error.Attrs()` 每次通过 `Clone()` 返回独立的切片，修改切片元素不会改变实例。
 
-属性值中的 map、slice 和指针仍引用原对象。需要独立的值时，在传入前自行复制。
+`Error.Attr(key)` 委托给实例内部的 `Attrs.Get(key)`，只查询当前实例，不搜索原因链，也不复制整个属性切片。
+
+通过 `Attrs.Get()`、`Error.Attr()` 或 `Error.Attrs()` 读取的 map、slice 和指针仍引用原对象。需要独立的值时，在传入前自行复制。
 
 ### 用独立 Registry 隔离定义
 
@@ -266,8 +274,8 @@ for _, kind := range errkind.Kinds() {
 - **接口边界**：`Kind` 和 `Error` 都是公开接口。本库注册的身份由私有实现提供，不可变且可比较；构造的实例通过只读方法提供信息。接口允许外部实现，其行为由该实现决定。
 - **构造与返回值**：注册身份的 `New / Wrap` 返回 `Error` 接口，可以直接读取实例详情；有效 Kind 的 `Wrap(nil, ...)` 返回 nil，转换为内置 `error` 后仍为 nil。
 - **nil 接口**：`Kind` 和 `Error` 的零值都是 nil 接口，直接调用方法会 panic。nil Kind 调用 `Wrap(nil, ...)` 也会 panic。
-- **消息与格式化**：消息按字面文本保存。错误文本由 `name(code)`、非空消息与非 nil 原因组成，`%v / %s / %+v` 使用相同文本。
-- **属性所有权**：构造和读取都会复制切片，引用类型的属性值仍共享原对象；共享值的并发访问由调用方同步。
+- **消息与格式化**：消息按字面文本保存。错误文本由 `name(code)`、非空消息与非 nil 原因组成，`%v / %s / %+v` 使用相同文本。标准包装、`errors.Join` 和自定义原因保留各自的 `Error()` 文本；文本不缓存，会反映底层原因的当前内容。
+- **属性所有权**：构造实例和调用 `Attrs()` 会复制属性切片，`Attr(key)` 直接返回对应值。引用类型的属性值仍共享原对象；共享值的并发访问由调用方同步。
 - **并发使用**：Registry 支持并发定义与目录读取，零值可直接使用，使用后不可复制。实例信息通过只读方法访问；底层原因的并发行为由其实现决定。
 
 ## 📚 示例
@@ -290,13 +298,7 @@ go test -race ./...
 go run ./examples
 ```
 
-性能基准：
-
-```bash
-go test -run='^$' -bench=. -benchmem .
-```
-
-CI 在 Go 1.21 下覆盖 Ubuntu 与 macOS，执行 vet、构建、竞态测试和示例，要求核心覆盖率不低于 90%；静态检查与漏洞扫描使用稳定版工具链。
+CI 在 Go 1.21 和最新稳定版下覆盖 Ubuntu 与 macOS，执行 vet、构建、竞态测试和示例，要求核心覆盖率不低于 90%；静态检查与漏洞扫描使用稳定版工具链。
 
 ## 📄 开源协议
 

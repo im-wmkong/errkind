@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -11,6 +12,15 @@ import (
 )
 
 var packageLevelKind = errkind.Define(900001, "pkg_level_define")
+
+type customError struct {
+	text  string
+	cause error
+}
+
+func (e *customError) Error() string { return e.text }
+
+func (e *customError) Unwrap() error { return e.cause }
 
 func requireError(t *testing.T, err error) errkind.Error {
 	t.Helper()
@@ -153,6 +163,57 @@ func TestMessages(t *testing.T) {
 	}
 }
 
+func TestErrorChainText(t *testing.T) {
+	r := errkind.NewRegistry()
+	a, b := r.Define(1, "a"), r.Define(2, "b")
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"instances", a.Wrap(b.New("inner"), "outer"), "a(1): outer: b(2): inner"},
+		{"empty_messages", a.Wrap(b.New(""), ""), "a(1): b(2)"},
+		{"plain_cause", a.Wrap(b.Wrap(errors.New("root"), "inner"), "outer"), "a(1): outer: b(2): inner: root"},
+		{"empty_cause", a.Wrap(errors.New(""), ""), "a(1): "},
+		{"bare_kind", a.Wrap(b, "outer"), "a(1): outer: b(2)"},
+		{"standard_wrapper", a.Wrap(fmt.Errorf("context: %w", b.New("inner")), "outer"), "a(1): outer: context: b(2): inner"},
+		{"joined", a.Wrap(errors.Join(b.New("inner"), errors.New("root")), "outer"), "a(1): outer: b(2): inner\nroot"},
+		{"multiple_wrap", a.Wrap(fmt.Errorf("both: %w / %w", b.New("inner"), errors.New("root")), "outer"), "a(1): outer: both: b(2): inner / root"},
+		{"custom_wrapper", a.Wrap(&customError{text: "custom text", cause: b.New("hidden")}, "outer"), "a(1): outer: custom text"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.err.Error(); got != test.want {
+				t.Fatalf("got %q; want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestDeepErrorChainText(t *testing.T) {
+	k := errkind.NewRegistry().Define(1, "failed")
+	var err error = errors.New("root")
+	const depth = 1024
+	for i := 0; i < depth; i++ {
+		err = k.Wrap(err, "layer")
+	}
+	if got, want := err.Error(), strings.Repeat("failed(1): layer: ", depth)+"root"; got != want {
+		t.Fatal("deep chain text must preserve every layer and the root cause")
+	}
+}
+
+func TestErrorCauseTextChanges(t *testing.T) {
+	k := errkind.NewRegistry().Define(1, "failed")
+	cause := &customError{text: "before"}
+	err := k.Wrap(k.Wrap(cause, "inner"), "outer")
+	if got := err.Error(); got != "failed(1): outer: failed(1): inner: before" {
+		t.Fatalf("unexpected initial text: %q", got)
+	}
+	cause.text = "after"
+	if got := err.Error(); got != "failed(1): outer: failed(1): inner: after" {
+		t.Fatalf("cause text must be read on every call: %q", got)
+	}
+}
+
 func TestErrorAs(t *testing.T) {
 	r := errkind.NewRegistry()
 	a, b := r.Define(0, "a"), r.Define(2, "b")
@@ -278,6 +339,76 @@ func TestKindIdentityOwnership(t *testing.T) {
 	}
 }
 
+func TestErrorAttr(t *testing.T) {
+	k := errkind.NewRegistry().Define(1, "failed")
+	detail := k.New("query",
+		errkind.With("uid", 1),
+		errkind.With("operation", "lookup"),
+		errkind.With("uid", 42),
+		errkind.With("nullable", nil),
+		errkind.With("", "empty key"),
+	)
+	outer := k.Wrap(detail, "outer", errkind.With("uid", 99))
+	for _, test := range []struct {
+		name string
+		err  errkind.Error
+		key  string
+		want any
+		ok   bool
+	}{
+		{"last_value", detail, "uid", 42, true},
+		{"later_key", detail, "operation", "lookup", true},
+		{"nil_value", detail, "nullable", nil, true},
+		{"empty_key", detail, "", "empty key", true},
+		{"missing", detail, "missing", nil, false},
+		{"empty_attrs", k.New(""), "uid", nil, false},
+		{"current_instance", outer, "uid", 99, true},
+		{"ignore_cause", outer, "operation", nil, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if value, ok := test.err.Attr(test.key); value != test.want || ok != test.ok {
+				t.Fatalf("Attr(%q) = (%v, %t); want (%v, %t)", test.key, value, ok, test.want, test.ok)
+			}
+		})
+	}
+}
+
+func TestAttrsGet(t *testing.T) {
+	attrs := errkind.Attrs{
+		errkind.With("uid", 1),
+		errkind.With("operation", "lookup"),
+		errkind.With("uid", 42),
+		errkind.With("nullable", "previous"),
+		errkind.With("nullable", nil),
+		errkind.With("", "empty key"),
+	}
+	for _, test := range []struct {
+		name  string
+		attrs errkind.Attrs
+		key   string
+		want  any
+		ok    bool
+	}{
+		{"last_value", attrs, "uid", 42, true},
+		{"unique_key", attrs, "operation", "lookup", true},
+		{"nil_override", attrs, "nullable", nil, true},
+		{"empty_key", attrs, "", "empty key", true},
+		{"missing", attrs, "missing", nil, false},
+		{"nil_attrs", nil, "uid", nil, false},
+		{"empty_attrs", errkind.Attrs{}, "uid", nil, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value, ok := test.attrs.Get(test.key)
+			if value != test.want || ok != test.ok {
+				t.Fatalf("Get(%q) = (%v, %t); want (%v, %t)", test.key, value, ok, test.want, test.ok)
+			}
+			if uniqueValue, uniqueOK := test.attrs.Unique().Get(test.key); uniqueValue != value || uniqueOK != ok {
+				t.Fatal("Get must return the same result before and after Unique")
+			}
+		})
+	}
+}
+
 func TestAttrsOwnershipAndOverrides(t *testing.T) {
 	k := errkind.NewRegistry().Define(1, "a")
 	value := map[string]int{"n": 1}
@@ -306,6 +437,17 @@ func TestAttrsOwnershipAndOverrides(t *testing.T) {
 	if again[1].Value.(map[string]int)["n"] != 3 {
 		t.Fatal("values are shallow copies")
 	}
+	if uid, ok := detail.Attr("uid"); !ok || uid != 2 {
+		t.Fatal("Attr must retain the value independently of input and returned slices")
+	}
+	shared, ok := detail.Attr("map")
+	if !ok || shared.(map[string]int)["n"] != 3 {
+		t.Fatal("Attr must return the shared value")
+	}
+	shared.(map[string]int)["n"] = 4
+	if value["n"] != 4 {
+		t.Fatal("Attr must not deep-copy referenced values")
+	}
 	if empty := requireError(t, k.New("")); empty.Attrs() != nil {
 		t.Fatal("empty attributes")
 	}
@@ -321,6 +463,9 @@ func TestErrorConcurrentReaders(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			attrs := detail.Attrs()
+			if uid, ok := detail.Attr("uid"); !ok || uid != 42 {
+				t.Error("concurrent attribute lookup changed the value")
+			}
 			var identity errkind.Kind
 			if !errors.As(detail, &identity) || identity != kind {
 				t.Error("concurrent identity extraction changed the Kind")
