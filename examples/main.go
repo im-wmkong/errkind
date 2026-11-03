@@ -21,11 +21,16 @@ func main() {
 	fmt.Println("Is ErrUserNotFound:", errors.Is(err, ErrUserNotFound))
 	fmt.Println("Is sql.ErrNoRows:", errors.Is(err, sql.ErrNoRows))
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	var detail *errkind.Error
-	if errors.As(err, &detail) {
+	var identity errkind.Kind
+	if errors.As(err, &identity) {
 		logger = logger.With(
-			slog.Uint64("code", uint64(detail.Kind().Code())),
-			slog.String("kind", detail.Kind().Name()),
+			slog.Uint64("code", uint64(identity.Code())),
+			slog.String("kind", identity.Name()),
+		)
+	}
+	var detail errkind.Error
+	if errors.As(err, &detail) && detail.Kind() == identity {
+		logger = logger.With(
 			slog.String("message", detail.Message()),
 			slog.Any("attrs", detail.Attrs()),
 		)

@@ -6,15 +6,15 @@
 
 **ErrKind** 是一个零第三方依赖的 Go 业务错误库。
 
-用 **Kind 定义错误身份，Error 记录本次失败**，通过消息、属性和原因链说明发生了什么。错误匹配与实例读取直接使用标准库的 `errors.Is / As / Unwrap`，业务代码可以继续组合 `fmt.Errorf` 和 `errors.Join`。
+用 **Kind 定义错误身份，Error 记录本次失败**，通过消息、属性和原因链说明发生了什么。`Kind` 和 `Error` 都是公开接口，注册身份与构造实例采用私有实现。错误匹配、身份与实例读取直接使用标准库的 `errors.Is / As / Unwrap`，业务代码可以继续组合 `fmt.Errorf` 和 `errors.Join`。
 
 适合需要统一业务错误码、保留底层原因，并为日志或协议出口读取错误信息的场景。
 
 ## ✨ 核心特性
 
 - 🪪 **稳定的业务身份** —— `Kind` 同时是错误值与匹配目标；通过 `errors.Is` 按身份判断，实例消息和属性可以各不相同。
-- 🔗 **标准原因链** —— `Kind.New / Wrap` 创建错误实例，`Wrap` 保留底层原因，兼容标准包装和多分支错误。
-- 🔎 **直接读取实例** —— `errors.As` 取得 `*Error`，通过 `Kind / Message / Attrs` 读取身份、消息和参数。
+- 🔗 **标准原因链** —— `Kind.New / Wrap` 返回可直接读取详情的 `Error`，`Wrap` 保留底层原因，兼容标准包装和多分支错误。
+- 🔎 **统一读取身份** —— `errors.As` 以 `Kind` 接口为目标，统一读取裸 Kind 与实例的身份；以 `Error` 接口为目标读取实例消息和参数。
 - 🏷️ **有序实例属性** —— `With` 创建属性，`Attrs.Clone / Unique` 提供浅拷贝与按键去重；同名键保留最后值和首次位置。
 - 📦 **独立或默认注册表** —— 包级 `Define / Kinds` 使用默认 Registry；`NewRegistry` 隔离定义，支持并发注册和目录读取。
 
@@ -30,8 +30,8 @@ go get github.com/im-wmkong/errkind
 
 | 组件 | 核心职责 | 关键能力 |
 | :--- | :--- | :--- |
-| **`Kind`** | 定义稳定的错误身份 | `Define` 注册身份；`Code / Name` 读取错误码与名称；`New / Wrap` 创建实例。 |
-| **`Error`** | 记录本次失败 | `Kind / Message / Attrs` 读取实例信息；`Error / Is / Unwrap` 接入标准错误机制。 |
+| **`Kind`** | 描述业务错误身份的公开接口 | `Define` 返回不可变身份；`Code / Name` 读取错误码与名称；`New / Wrap` 创建实例。 |
+| **`Error`** | 描述本次失败的公开接口 | `Kind / Code / Name / Message / Attrs` 读取实例信息；通过标准库 `errors.Is / As / Unwrap` 匹配、提取和访问原因。 |
 | **`Registry`** | 管理错误定义 | `NewRegistry` 创建独立注册表；`Define` 检查 code/name 唯一性；`Kinds` 返回注册目录。 |
 | **`Attr / Attrs`** | 携带实例参数 | `With(key, value)` 创建属性；`Clone` 保留全部元素；`Unique` 生成按键去重的副本。 |
 | **`Code`** | 表达业务错误码 | 基于 `uint64` 的命名类型，支持完整的 64 位无符号范围，0 是有效值。 |
@@ -44,7 +44,7 @@ go get github.com/im-wmkong/errkind
 
 1. 用 `Define` 声明业务错误的 code 和 name。
 2. 用 `Wrap` 保留底层原因，添加本次失败的消息与属性。
-3. 用 `errors.Is` 匹配身份，用 `errors.As` 读取实例。
+3. 用 `errors.Is` 匹配身份，用 `errors.As` 读取身份和实例。
 
 将下面的代码保存为 `main.go`：
 
@@ -70,9 +70,13 @@ func main() {
 	fmt.Println(errors.Is(err, ErrUserNotFound))
 	fmt.Println(errors.Is(err, sql.ErrNoRows))
 
-	var detail *errkind.Error
+	var kind errkind.Kind
+	if errors.As(err, &kind) {
+		fmt.Println(kind.Code(), kind.Name())
+	}
+	var detail errkind.Error
 	if errors.As(err, &detail) {
-		fmt.Println(detail.Kind().Code(), detail.Kind().Name(), detail.Message(), detail.Attrs())
+		fmt.Println(detail.Message(), detail.Attrs())
 	}
 	fmt.Println(err)
 }
@@ -87,7 +91,8 @@ go run main.go
 ```text
 true
 true
-10001 user_not_found lookup user [{uid 42}]
+10001 user_not_found
+lookup user [{uid 42}]
 user_not_found(10001): lookup user: sql: no rows in result set
 ```
 
@@ -107,17 +112,44 @@ func checkUser() error {
 }
 ```
 
-裸 Kind 可通过 `errors.Is` 匹配，也可通过 `errors.As` 读取 `*Kind`。它只包含身份信息；`errors.As` 查找 `*Error` 时，需要链中存在错误实例。
+裸 Kind 可通过 `errors.Is` 匹配。它只包含身份信息；`errors.As` 查找 `Error` 时，需要链中存在满足该接口的错误实例。
 
 需要说明本次失败时，使用 `New` 创建实例：
 
 ```go
 err := ErrUserNotFound.New("missing active user", errkind.With("uid", 42))
+fmt.Println(err.Code(), err.Name())         // 10001 user_not_found
+fmt.Println(err.Message())                  // missing active user
+fmt.Println(err.Attrs())                    // [{uid 42}]
 fmt.Println(errors.Is(err, ErrUserNotFound)) // true
-fmt.Println(errors.Unwrap(err) == nil)      // true
+fmt.Println(errors.Unwrap(err) == nil)       // true
 ```
 
-`New` 与原因非 nil 的 `Wrap` 每次创建独立实例；实例的消息、属性和底层原因由本次调用决定，共享的 Kind 用于匹配业务类别。
+`New / Wrap` 返回 `Error` 接口，可以直接调用 `Kind / Code / Name / Message / Attrs`。`Code()` 和 `Name()` 分别返回所属 Kind 的错误码和名称，与 `Kind().Code()`、`Kind().Name()` 一致。`New` 与原因非 nil 的 `Wrap` 每次创建独立实例；实例的消息、属性和底层原因由本次调用决定，共享的 Kind 用于匹配业务类别。
+
+有效 Kind 的 `Wrap(nil, ...)` 返回 nil 接口，赋给内置 `error` 或从返回 `error` 的函数传出后仍然是 nil：
+
+```go
+var err error = ErrUserNotFound.Wrap(nil, "lookup user")
+fmt.Println(err == nil) // true
+```
+
+### 统一读取业务身份
+
+以 `Kind` 接口为 `errors.As` 的目标，可以同时处理裸 Kind 和错误实例：
+
+```go
+for _, err := range []error{checkUser(), findUser(42)} {
+	var kind errkind.Kind
+	if errors.As(err, &kind) {
+		fmt.Println(kind.Code(), kind.Name()) // 10001 user_not_found
+	}
+}
+```
+
+`errors.As(err, &kind)` 按标准库的前序、深度优先顺序，返回首先遇到的业务身份。读取本库创建的实例时，先返回该实例自身的身份。通过 `errors.Unwrap(err)` 可以访问直接原因。
+
+注册表返回的 Kind 可以安全复制，副本保留相同身份。重新赋值接口变量，或替换 `Kinds()` 返回切片中的元素，不会修改注册定义和已经创建的错误。
 
 ### 复制、去重和读取属性
 
@@ -132,12 +164,9 @@ fmt.Println(attrs.Clone())  // [{uid 1} {operation profile} {uid 42}]
 fmt.Println(attrs.Unique()) // [{uid 42} {operation profile}]
 
 err := ErrUserNotFound.New("missing active user", attrs...)
-var detail *errkind.Error
-if errors.As(err, &detail) {
-	returned := detail.Attrs()
-	returned[0].Value = 99
-	fmt.Println(detail.Attrs()) // [{uid 42} {operation profile}]
-}
+returned := err.Attrs()
+returned[0].Value = 99
+fmt.Println(err.Attrs()) // [{uid 42} {operation profile}]
 ```
 
 `Clone()` 浅拷贝全部元素，保留顺序与重复键。`Unique()` 返回去重后的浅拷贝，同名键最后的值胜出，位置沿用第一次出现的位置；空集合返回 nil。
@@ -171,23 +200,25 @@ joined := errors.Join(
 fmt.Println(errors.Is(joined, ErrUserNotFound))     // true
 fmt.Println(errors.Is(joined, ErrCacheUnavailable)) // true
 
-var first *errkind.Error
+var first errkind.Kind
 if errors.As(joined, &first) {
-	fmt.Println(first.Kind().Name()) // user_not_found
+	fmt.Println(first.Name()) // user_not_found
 }
 
 ErrLoadProfileFailed := errkind.Define(30001, "load_profile_failed")
 err := ErrLoadProfileFailed.Wrap(joined, "load profile")
-var outer *errkind.Error
+var outer errkind.Kind
 if errors.As(err, &outer) {
-	fmt.Println(outer.Kind().Name()) // load_profile_failed
+	fmt.Println(outer.Name()) // load_profile_failed
 }
 fmt.Println(errors.Is(err, ErrUserNotFound)) // true
 ```
 
-`errors.Is` 搜索原因树中的匹配身份；`errors.As` 按 Go 标准规则深度优先查找，返回第一个匹配实例。外层的 `Wrap` 为整体失败提供明确身份，同时保留下游错误。
+`errors.Is` 搜索原因树中的匹配身份；`errors.As` 以 `Kind` 为目标时读取首个业务身份，以 `Error` 为目标时读取首个实例。外层的 `Wrap` 为整体失败提供明确身份，同时保留下游错误。
 
-标准 `fmt.Errorf("load profile: %w", err)` 也可以补充函数层上下文。通过 `errors.As` 仍可读取链中的 `*Error` 或底层的 `*os.PathError` 等具体类型。
+身份查询与实例查询各自遵循遍历规则。例如 `errors.Join(ErrUserNotFound, ErrCacheUnavailable.New("load cache"))` 的首个身份是 `ErrUserNotFound`，首个实例却属于 `ErrCacheUnavailable`。同样，`errors.Is(err, target)` 为真，并不意味着随后读取的首个 `Error` 属于 target。
+
+标准 `fmt.Errorf("load profile: %w", err)` 也可以补充函数层上下文。通过 `errors.As` 仍可读取链中的 `Error`，以及底层的 `*os.PathError` 等具体类型。
 
 ### 在应用边界记录日志
 
@@ -195,11 +226,16 @@ fmt.Println(errors.Is(err, ErrUserNotFound)) // true
 err := findUser(42)
 logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-var detail *errkind.Error
-if errors.As(err, &detail) {
+var identity errkind.Kind
+if errors.As(err, &identity) {
 	logger = logger.With(
-		slog.Uint64("code", uint64(detail.Kind().Code())),
-		slog.String("kind", detail.Kind().Name()),
+		slog.Uint64("code", uint64(identity.Code())),
+		slog.String("kind", identity.Name()),
+	)
+}
+var detail errkind.Error
+if errors.As(err, &detail) && detail.Kind() == identity {
+	logger = logger.With(
 		slog.String("message", detail.Message()),
 		slog.Any("attrs", detail.Attrs()),
 	)
@@ -212,7 +248,7 @@ logger.Error("request failed",
 
 该片段需要导入 `log/slog` 和 `os`。
 
-应用直接选择需要记录的字段，完整错误文本使用 `err.Error()`。HTTP/gRPC 状态、公开消息、重试与观测策略也由应用按业务场景决定。
+该示例为裸 Kind 和实例统一记录 code/name，并仅在首个实例属于同一身份时附加消息与属性。应用直接选择需要记录的字段，完整错误文本使用 `err.Error()`。HTTP/gRPC 状态、公开消息、重试与观测策略也由应用按业务场景决定。
 
 ### 导出实际注册的错误目录
 
@@ -227,15 +263,16 @@ for _, kind := range errkind.Kinds() {
 ## 🚧 使用约定
 
 - **定义唯一性**：同一个 Registry 内 code 与 name 各自唯一，重复定义或空 name 会 panic。通过 `Define / Registry.Define` 登记 Kind。
-- **构造与返回值**：`Error` 应通过 `Kind.New / Wrap` 创建，其零值无效。两个方法返回 `error`；`Wrap(nil, ...)` 返回 nil。
-- **nil Kind**：`New` 或携带非 nil 原因的 `Wrap` 会 panic；`Wrap(nil, ...)` 仍返回 nil。
+- **接口边界**：`Kind` 和 `Error` 都是公开接口。本库注册的身份由私有实现提供，不可变且可比较；构造的实例通过只读方法提供信息。接口允许外部实现，其行为由该实现决定。
+- **构造与返回值**：注册身份的 `New / Wrap` 返回 `Error` 接口，可以直接读取实例详情；有效 Kind 的 `Wrap(nil, ...)` 返回 nil，转换为内置 `error` 后仍为 nil。
+- **nil 接口**：`Kind` 和 `Error` 的零值都是 nil 接口，直接调用方法会 panic。nil Kind 调用 `Wrap(nil, ...)` 也会 panic。
 - **消息与格式化**：消息按字面文本保存。错误文本由 `name(code)`、非空消息与非 nil 原因组成，`%v / %s / %+v` 使用相同文本。
 - **属性所有权**：构造和读取都会复制切片，引用类型的属性值仍共享原对象；共享值的并发访问由调用方同步。
 - **并发使用**：Registry 支持并发定义与目录读取，零值可直接使用，使用后不可复制。实例信息通过只读方法访问；底层原因的并发行为由其实现决定。
 
 ## 📚 示例
 
-完整可运行示例见 [`examples/main.go`](examples/main.go)，包含业务身份匹配、底层原因匹配、实例读取和 JSON 日志。
+完整可运行示例见 [`examples/main.go`](examples/main.go)，包含业务身份匹配、底层原因匹配、统一身份提取、实例读取和 JSON 日志。
 
 在仓库根目录运行：
 

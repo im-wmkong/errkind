@@ -9,7 +9,8 @@ import (
 )
 
 var benchmarkError error
-var benchmarkDetail *errkind.Error
+var benchmarkDetail errkind.Error
+var benchmarkKind errkind.Kind
 var benchmarkMatched bool
 
 func BenchmarkNew(b *testing.B) {
@@ -40,7 +41,7 @@ func BenchmarkWrap(b *testing.B) {
 func BenchmarkMatch(b *testing.B) {
 	k := errkind.NewRegistry().Define(1, "match")
 	leaf := k.New("")
-	deep := leaf
+	var deep error = leaf
 	for i := 0; i < 32; i++ {
 		deep = fmt.Errorf("context: %w", deep)
 	}
@@ -57,7 +58,7 @@ func BenchmarkMatch(b *testing.B) {
 func BenchmarkAs(b *testing.B) {
 	k := errkind.NewRegistry().Define(1, "as")
 	leaf := k.New("lookup user")
-	deep := leaf
+	var deep error = leaf
 	for i := 0; i < 32; i++ {
 		deep = fmt.Errorf("context: %w", deep)
 	}
@@ -66,6 +67,23 @@ func BenchmarkAs(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				benchmarkMatched = errors.As(err, &benchmarkDetail)
+			}
+		})
+	}
+}
+
+func BenchmarkAsKind(b *testing.B) {
+	k := errkind.NewRegistry().Define(1, "as_kind")
+	leaf := k.New("lookup user")
+	var deep error = leaf
+	for i := 0; i < 32; i++ {
+		deep = fmt.Errorf("context: %w", deep)
+	}
+	for name, err := range map[string]error{"bare": k, "single": leaf, "deep32": deep, "join": errors.Join(errors.New("left"), leaf)} {
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				benchmarkMatched = errors.As(err, &benchmarkKind)
 			}
 		})
 	}

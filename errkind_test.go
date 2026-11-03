@@ -12,11 +12,11 @@ import (
 
 var packageLevelKind = errkind.Define(900001, "pkg_level_define")
 
-func requireError(t *testing.T, err error) *errkind.Error {
+func requireError(t *testing.T, err error) errkind.Error {
 	t.Helper()
-	var detail *errkind.Error
+	var detail errkind.Error
 	if !errors.As(err, &detail) {
-		t.Fatalf("expected an *errkind.Error, got %T", err)
+		t.Fatalf("expected an errkind.Error, got %T", err)
 	}
 	return detail
 }
@@ -39,8 +39,11 @@ func TestCodeRange(t *testing.T) {
 			kind := registry.Define(test.code, name)
 			err := kind.New("failed")
 			detail := requireError(t, err)
-			if detail.Kind().Code() != test.code || !errors.Is(err, kind) {
-				t.Fatal("code or identity changed")
+			if detail.Code() != test.code || detail.Name() != name {
+				t.Fatal("instance code or name changed")
+			}
+			if detail.Code() != detail.Kind().Code() || detail.Name() != detail.Kind().Name() || !errors.Is(err, kind) {
+				t.Fatal("instance metadata must match its Kind")
 			}
 			if kind.Error() != name+"("+test.text+")" || err.Error() != kind.Error()+": failed" {
 				t.Fatal("error text lost code precision")
@@ -76,6 +79,54 @@ func TestIdentityAndCauses(t *testing.T) {
 	}
 }
 
+func TestErrorResults(t *testing.T) {
+	k := errkind.NewRegistry().Define(1, "failed")
+	detail := k.New("query", errkind.With("uid", 42))
+	if detail.Kind() != k || detail.Message() != "query" || detail.Attrs()[0].Value != 42 {
+		t.Fatal("New must return directly readable instance details")
+	}
+	cause := errors.New("database")
+	wrapped := k.Wrap(cause, "lookup")
+	if wrapped.Kind() != k || wrapped.Code() != k.Code() || wrapped.Name() != k.Name() || wrapped.Message() != "lookup" || errors.Unwrap(wrapped) != cause {
+		t.Fatal("Wrap must return directly readable details and preserve its cause")
+	}
+	var err error = wrapped
+	if requireError(t, err) != wrapped || !errors.Is(err, cause) || !errors.Is(err, k) {
+		t.Fatal("conversion to error must preserve the instance and its error chain")
+	}
+}
+
+func TestWrapNilResult(t *testing.T) {
+	k := errkind.NewRegistry().Define(1, "failed")
+	var detail errkind.Error = k.Wrap(nil, "ignored", errkind.With("uid", 42))
+	var err error = detail
+	if detail != nil || err != nil || errors.Join(err) != nil {
+		t.Fatal("Wrap(nil) must remain nil after conversion to error")
+	}
+	returned := func() error { return k.Wrap(nil, "ignored") }()
+	if returned != nil {
+		t.Fatal("returning Wrap(nil) from an error-returning function must remain nil")
+	}
+}
+
+func TestErrorOwnership(t *testing.T) {
+	k := errkind.NewRegistry().Define(1, "failed")
+	cause := errors.New("database")
+	original := k.Wrap(cause, "first", errkind.With("uid", 42))
+	copied := original
+	if copied != original {
+		t.Fatal("copying an Error must preserve the instance")
+	}
+	chain := fmt.Errorf("context: %w", copied)
+	copied = k.New("second")
+	if copied == original || requireError(t, chain) != original {
+		t.Fatal("reassignment must not replace an instance held by a wrapper")
+	}
+	if original.Message() != "first" || original.Attrs()[0].Value != 42 || errors.Unwrap(original) != cause {
+		t.Fatal("reassignment changed the original instance")
+	}
+}
+
 func TestMessages(t *testing.T) {
 	k := errkind.NewRegistry().Define(1, "failed")
 	cause := errors.New("root")
@@ -107,42 +158,123 @@ func TestErrorAs(t *testing.T) {
 	a, b := r.Define(0, "a"), r.Define(2, "b")
 	leaf := a.New("internal", errkind.With("uid", 1))
 	detail := requireError(t, leaf)
-	if detail.Kind().Code() != 0 || detail.Kind().Name() != "a" || detail.Message() != "internal" || len(detail.Attrs()) != 1 {
+	if detail.Code() != 0 || detail.Name() != "a" || detail.Message() != "internal" || len(detail.Attrs()) != 1 {
 		t.Fatal("instance metadata changed")
 	}
 	right := b.New("right")
 	outer := b.Wrap(errors.Join(leaf, right), "batch")
-	deep := leaf
+	var deep error = leaf
 	for i := 0; i < 300; i++ {
 		deep = fmt.Errorf("context: %w", deep)
 	}
 	for _, test := range []struct {
 		name string
 		err  error
-		want *errkind.Error
+		want errkind.Error
 	}{
-		{"direct", leaf, leaf.(*errkind.Error)},
-		{"wrapped", fmt.Errorf("lookup: %w", leaf), leaf.(*errkind.Error)},
-		{"deep", deep, leaf.(*errkind.Error)},
-		{"single_join", errors.Join(leaf), leaf.(*errkind.Error)},
-		{"join_left", errors.Join(leaf, right), leaf.(*errkind.Error)},
-		{"join_right", errors.Join(right, leaf), right.(*errkind.Error)},
-		{"multiple_wrap", fmt.Errorf("both: %w %w", leaf, right), leaf.(*errkind.Error)},
-		{"outer", outer, outer.(*errkind.Error)},
+		{"direct", leaf, leaf},
+		{"wrapped", fmt.Errorf("lookup: %w", leaf), leaf},
+		{"deep", deep, leaf},
+		{"single_join", errors.Join(leaf), leaf},
+		{"join_left", errors.Join(leaf, right), leaf},
+		{"join_right", errors.Join(right, leaf), right},
+		{"multiple_wrap", fmt.Errorf("both: %w %w", leaf, right), leaf},
+		{"outer", outer, outer},
 		{"bare_kind", a, nil},
 		{"plain", errors.New("plain"), nil},
 		{"nil", nil, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var detail *errkind.Error
+			var detail errkind.Error
 			if matched := errors.As(test.err, &detail); matched != (test.want != nil) || detail != test.want {
 				t.Fatalf("got %p; want %p", detail, test.want)
 			}
 		})
 	}
-	var identity *errkind.Kind
+	var identity errkind.Kind
 	if !errors.As(fmt.Errorf("lookup: %w", a), &identity) || identity != a || !errors.Is(a, a) {
 		t.Fatal("bare Kinds must retain standard error identity")
+	}
+}
+
+func TestKindAs(t *testing.T) {
+	r := errkind.NewRegistry()
+	a, b := r.Define(1, "a"), r.Define(2, "b")
+	leaf := a.New("leaf")
+	var deep error = leaf
+	for i := 0; i < 32; i++ {
+		deep = fmt.Errorf("context: %w", deep)
+	}
+	for _, test := range []struct {
+		name string
+		err  error
+		want errkind.Kind
+	}{
+		{"bare", a, a},
+		{"wrapped_bare", fmt.Errorf("lookup: %w", a), a},
+		{"instance", leaf, a},
+		{"wrapped_instance", fmt.Errorf("lookup: %w", leaf), a},
+		{"deep", deep, a},
+		{"single_join", errors.Join(leaf), a},
+		{"outer_bare", b.Wrap(a, "outer"), b},
+		{"outer_instance", b.Wrap(leaf, "outer"), b},
+		{"join_bare_instance", errors.Join(a, b.New("right")), a},
+		{"join_instance_bare", errors.Join(b.New("left"), a), b},
+		{"join_plain_bare", errors.Join(errors.New("plain"), a), a},
+		{"join_plain_instance", errors.Join(errors.New("plain"), leaf), a},
+		{"outer_join", b.Wrap(errors.Join(a, leaf), "outer"), b},
+		{"depth_first", errors.Join(fmt.Errorf("context: %w", leaf), b), a},
+		{"multiple_wrap", fmt.Errorf("both: %w %w", a, b.New("right")), a},
+		{"plain", errors.New("plain"), nil},
+		{"nil", nil, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var identity errkind.Kind
+			if matched := errors.As(test.err, &identity); matched != (test.want != nil) || identity != test.want {
+				t.Fatalf("got %v; want %v", identity, test.want)
+			}
+		})
+	}
+}
+
+func TestKindAndInstanceQueries(t *testing.T) {
+	r := errkind.NewRegistry()
+	a, b := r.Define(1, "a"), r.Define(2, "b")
+	instance := b.New("right", errkind.With("source", "b"))
+	joined := errors.Join(a, instance)
+	var identity errkind.Kind
+	if !errors.As(joined, &identity) || identity != a {
+		t.Fatal("identity query must include bare Kinds")
+	}
+	if detail := requireError(t, joined); detail.Kind() != b || detail != instance || detail.Attrs()[0].Value != "b" {
+		t.Fatal("instance query must find the first instance")
+	}
+	outer := a.Wrap(instance, "outer")
+	if !errors.Is(outer, b) || requireError(t, outer).Kind() != a {
+		t.Fatal("matching a cause must not change instance selection")
+	}
+}
+
+func TestKindIdentityOwnership(t *testing.T) {
+	r := errkind.NewRegistry()
+	original := r.Define(1, "a")
+	other := r.Define(2, "b")
+	copied := original
+	err := copied.New("created before reassignment")
+	if copied != original || !errors.Is(err, original) || requireError(t, err).Kind() != copied {
+		t.Fatal("copying a Kind must preserve its identity")
+	}
+	copied = other
+	catalog := r.Kinds()
+	catalog[0] = other
+	if copied != other || requireError(t, err).Kind() != original || r.Kinds()[0] != original {
+		t.Fatal("reassignment must not change an existing definition")
+	}
+	if err.Error() != "a(1): created before reassignment" || errors.Is(err, other) {
+		t.Fatal("existing error metadata or matching changed")
+	}
+	if original.Code() != 1 || original.Name() != "a" {
+		t.Fatal("definition metadata changed")
 	}
 }
 
@@ -189,7 +321,11 @@ func TestErrorConcurrentReaders(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			attrs := detail.Attrs()
-			if detail.Kind() != kind || detail.Message() != "query" || attrs[0].Value != 42 || detail.Unwrap() != cause || detail.Error() != "failed(1): query: database" {
+			var identity errkind.Kind
+			if !errors.As(detail, &identity) || identity != kind {
+				t.Error("concurrent identity extraction changed the Kind")
+			}
+			if detail.Kind() != kind || detail.Message() != "query" || attrs[0].Value != 42 || errors.Unwrap(detail) != cause || detail.Error() != "failed(1): query: database" {
 				t.Error("concurrent read changed error details")
 			}
 			attrs[0].Value = 99
@@ -215,6 +351,9 @@ func TestRegistry(t *testing.T) {
 		})
 	}
 	var r errkind.Registry
+	if r.Kinds() != nil {
+		t.Fatal("empty registry catalog must be nil")
+	}
 	a, b := r.Define(7, "a"), r.Define(8, "b")
 	list := r.Kinds()
 	if len(list) != 2 || list[0] != a || list[1] != b {
@@ -259,15 +398,23 @@ func TestStandardFormatting(t *testing.T) {
 	}
 }
 
-func TestNilKindConstruction(t *testing.T) {
-	var kind *errkind.Kind
-	if kind.Wrap(nil, "ignored") != nil {
-		t.Fatal("nil cause must remain a nil error")
+func TestNilKind(t *testing.T) {
+	var kind errkind.Kind
+	for _, test := range []struct {
+		name string
+		call func()
+	}{
+		{"new", func() { _ = kind.New("invalid receiver") }},
+		{"wrap_nil", func() { _ = kind.Wrap(nil, "invalid receiver") }},
+		{"wrap_cause", func() { _ = kind.Wrap(errors.New("cause"), "invalid receiver") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("calling a nil Kind must panic")
+				}
+			}()
+			test.call()
+		})
 	}
-	defer func() {
-		if recover() == nil {
-			t.Fatal("nil Kind cannot create a valid instance")
-		}
-	}()
-	_ = kind.New("invalid receiver")
 }

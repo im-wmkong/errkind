@@ -5,47 +5,58 @@ import "strconv"
 // Code is a 64-bit unsigned business error code. Zero is valid.
 type Code uint64
 
-// Kind is a stable identity within a Registry. It is also a valid context-free error.
-// Definitions are immutable and match by pointer, even across Registries with
-// identical codes and names. Create them with Define or Registry.Define.
-type Kind struct {
+// Kind describes a business error identity and creates instances of it.
+// Define and Registry.Define return immutable, comparable implementations that
+// match by pointer, even across Registries with identical codes and names.
+// Copying a returned Kind preserves its identity. Other implementations may
+// define their own behavior. The zero value is a nil interface and cannot be used.
+// Use errors.As with a *Kind target to read an identity from an error tree.
+type Kind interface {
+	error
+
+	// Code returns the business error code.
+	Code() Code
+
+	// Name returns the business error name.
+	Name() string
+
+	// New creates an Error with a literal message and optional attributes.
+	// It copies the attribute slice, retaining the last value for each key at its
+	// first insertion position.
+	New(message string, attrs ...Attr) Error
+
+	// Wrap creates an Error while preserving cause for errors.Is and errors.As.
+	// Messages and attributes follow New. A nil cause returns a nil Error,
+	// which remains nil when assigned to error.
+	Wrap(cause error, message string, attrs ...Attr) Error
+}
+
+type kind struct {
 	code Code
 	name string
 }
 
-// Code returns the business error code.
-func (k *Kind) Code() Code { return k.code }
+func (k *kind) Code() Code { return k.code }
 
-// Name returns the business error name.
-func (k *Kind) Name() string { return k.name }
+func (k *kind) Name() string { return k.name }
 
-// Error returns the identity as name(code).
-func (k *Kind) Error() string {
+func (k *kind) Error() string {
 	return k.name + "(" + strconv.FormatUint(uint64(k.code), 10) + ")"
 }
 
-// New creates an *Error with a literal message and optional attributes.
-// It copies the attribute slice, retaining the last value for each key at its
-// first insertion position. A nil Kind panics.
-func (k *Kind) New(message string, attrs ...Attr) error {
+func (k *kind) New(message string, attrs ...Attr) Error {
 	return k.newError(nil, message, attrs)
 }
 
-// Wrap creates an *Error while preserving cause for errors.Is and errors.As.
-// Messages and attributes follow New. A nil cause returns nil, including when
-// the Kind is nil. A nil Kind with a non-nil cause panics.
-func (k *Kind) Wrap(cause error, message string, attrs ...Attr) error {
+func (k *kind) Wrap(cause error, message string, attrs ...Attr) Error {
 	if cause == nil {
 		return nil
 	}
 	return k.newError(cause, message, attrs)
 }
 
-func (k *Kind) newError(cause error, message string, attrs Attrs) *Error {
-	if k == nil {
-		panic("errkind: cannot create an instance from a nil Kind")
-	}
-	return &Error{
+func (k *kind) newError(cause error, message string, attrs Attrs) *instance {
+	return &instance{
 		kind:    k,
 		message: message,
 		attrs:   attrs.Unique(),
