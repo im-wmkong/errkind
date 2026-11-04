@@ -2,20 +2,20 @@ package errkind
 
 import "strconv"
 
-// Code is a 64-bit unsigned business error code. Zero is valid.
-type Code uint64
-
 // Kind describes a business error identity and creates instances of it.
 // Define and Registry.Define return immutable, comparable implementations that
 // match by pointer, even across Registries with identical codes and names.
 // Copying a returned Kind preserves its identity. Other implementations may
 // define their own behavior. The zero value is a nil interface and cannot be used.
-// Use errors.As with a *Kind target to read an identity from an error tree.
+// Use Kind for definitions, construction and errors.Is matching. Return New or
+// Wrap instances from business operations, using New("") without a message.
+// A Kind also implements error and can be extracted with a *Kind errors.As target.
+// At application boundaries, extract an Error and read its Kind and details.
 type Kind interface {
 	error
 
-	// Code returns the business error code.
-	Code() Code
+	// Code returns the business error code. Zero is valid.
+	Code() uint64
 
 	// Name returns the business error name.
 	Name() string
@@ -32,16 +32,16 @@ type Kind interface {
 }
 
 type kind struct {
-	code Code
+	code uint64
 	name string
 }
 
-func (k *kind) Code() Code { return k.code }
+func (k *kind) Code() uint64 { return k.code }
 
 func (k *kind) Name() string { return k.name }
 
 func (k *kind) Error() string {
-	return k.name + "(" + strconv.FormatUint(uint64(k.code), 10) + ")"
+	return k.name + "(" + strconv.FormatUint(k.code, 10) + ")"
 }
 
 func (k *kind) New(message string, attrs ...Attr) Error {

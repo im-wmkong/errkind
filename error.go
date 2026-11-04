@@ -6,8 +6,10 @@ import "strings"
 // implementations whose fields can only be read through this interface.
 // Attribute values and the underlying cause remain shared with their owners.
 // Other implementations may define their own behavior. The zero value is a nil
-// interface and cannot be used. Use errors.As with a pointer to Error to find an
-// instance through standard wrappers and joined errors.
+// interface and cannot be used. At application boundaries, use one errors.As call
+// with a pointer to Error to find an instance through standard wrappers and joined
+// errors, then read its identity and details through this interface. Kinds
+// returned by Define and Registry.Define do not satisfy Error.
 type Error interface {
 	error
 
@@ -15,7 +17,7 @@ type Error interface {
 	Kind() Kind
 
 	// Code returns the business error code of the instance's Kind.
-	Code() Code
+	Code() uint64
 
 	// Name returns the business error name of the instance's Kind.
 	Name() string
@@ -41,7 +43,7 @@ type instance struct {
 
 func (e *instance) Kind() Kind { return e.kind }
 
-func (e *instance) Code() Code { return e.kind.Code() }
+func (e *instance) Code() uint64 { return e.kind.Code() }
 
 func (e *instance) Name() string { return e.kind.Name() }
 

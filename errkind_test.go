@@ -34,7 +34,7 @@ func requireError(t *testing.T, err error) errkind.Error {
 func TestCodeRange(t *testing.T) {
 	registry := errkind.NewRegistry()
 	for _, test := range []struct {
-		code errkind.Code
+		code uint64
 		text string
 	}{
 		{0, "0"},
@@ -481,7 +481,7 @@ func TestErrorConcurrentReaders(t *testing.T) {
 
 func TestRegistry(t *testing.T) {
 	for _, duplicate := range []struct {
-		code errkind.Code
+		code uint64
 		name string
 	}{{1, "b"}, {2, "a"}, {3, ""}} {
 		t.Run(fmt.Sprint(duplicate), func(t *testing.T) {
@@ -520,7 +520,7 @@ func TestRegistry(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			r.Define(errkind.Code(i+100), fmt.Sprint(i))
+			r.Define(uint64(i+100), fmt.Sprint(i))
 			_ = r.Kinds()
 		}(i)
 	}

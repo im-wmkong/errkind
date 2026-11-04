@@ -9,7 +9,7 @@ import (
 // Its zero value is ready to use. A Registry must not be copied after use.
 type Registry struct {
 	mu     sync.RWMutex
-	byCode map[Code]*kind
+	byCode map[uint64]*kind
 	byName map[string]*kind
 	kinds  []*kind
 }
@@ -18,7 +18,7 @@ type Registry struct {
 func NewRegistry() *Registry { return &Registry{} }
 
 // Define registers a Kind. An empty name or duplicate code/name panics.
-func (r *Registry) Define(code Code, name string) Kind {
+func (r *Registry) Define(code uint64, name string) Kind {
 	if name == "" {
 		panic("errkind: Define name must not be empty")
 	}
@@ -31,7 +31,7 @@ func (r *Registry) Define(code Code, name string) Kind {
 		panic(fmt.Sprintf("errkind: duplicate name %q (registered with code %d, new %d)", name, registered.code, code))
 	}
 	if r.byCode == nil {
-		r.byCode = make(map[Code]*kind)
+		r.byCode = make(map[uint64]*kind)
 	}
 	if r.byName == nil {
 		r.byName = make(map[string]*kind)
@@ -59,7 +59,7 @@ func (r *Registry) Kinds() []Kind {
 var defaultRegistry = NewRegistry()
 
 // Define registers an identity in the default Registry.
-func Define(code Code, name string) Kind { return defaultRegistry.Define(code, name) }
+func Define(code uint64, name string) Kind { return defaultRegistry.Define(code, name) }
 
 // Kinds returns the default Registry's catalog.
 func Kinds() []Kind { return defaultRegistry.Kinds() }
