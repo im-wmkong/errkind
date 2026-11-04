@@ -25,7 +25,7 @@ func main() {
 	if errors.As(err, &detail) {
 		logger = logger.With(
 			slog.Uint64("code", detail.Code()),
-			slog.String("kind", detail.Name()),
+			slog.String("name", detail.Name()),
 			slog.String("message", detail.Message()),
 			slog.Any("attrs", detail.Attrs()),
 		)
