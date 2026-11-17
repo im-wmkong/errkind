@@ -32,6 +32,13 @@ func (attrs Attrs) Get(key string) (any, bool) {
 // Clone returns a shallow copy, preserving all attributes and their order.
 func (attrs Attrs) Clone() Attrs { return slices.Clone(attrs) }
 
+// Merge returns a shallow copy with more merged after attrs, keeping one attribute
+// per key. The last value wins at the key's first insertion position. Neither input
+// slice is modified; referenced values remain shared. Empty results return nil.
+func (attrs Attrs) Merge(more ...Attr) Attrs {
+	return append(attrs.Clone(), more...).Unique()
+}
+
 // Unique returns a shallow copy with one attribute per key. The last value wins
 // at the key's first insertion position. Empty collections return nil.
 func (attrs Attrs) Unique() Attrs {

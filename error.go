@@ -32,6 +32,12 @@ type Error interface {
 
 	// Attrs returns a shallow copy in insertion order. Referenced values remain shared.
 	Attrs() Attrs
+
+	// WithAttrs returns a new instance with the supplied attributes merged.
+	// The last value for each key wins at its first insertion position.
+	// Kind, message and cause are preserved. The original instance is unchanged.
+	// Attribute values remain shared. With no attributes, it returns the receiver.
+	WithAttrs(attrs ...Attr) Error
 }
 
 type instance struct {
@@ -52,6 +58,15 @@ func (e *instance) Message() string { return e.message }
 func (e *instance) Attr(key string) (any, bool) { return e.attrs.Get(key) }
 
 func (e *instance) Attrs() Attrs { return e.attrs.Clone() }
+
+func (e *instance) WithAttrs(attrs ...Attr) Error {
+	if len(attrs) == 0 {
+		return e
+	}
+	clone := *e
+	clone.attrs = e.attrs.Merge(attrs...)
+	return &clone
+}
 
 // Error returns the identity, message and cause as text.
 func (e *instance) Error() string {
